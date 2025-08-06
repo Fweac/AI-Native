@@ -1,0 +1,74 @@
+# Dependencies
+/vendor/
+/node_modules/
+composer.lock
+package-lock.json
+
+# IDE & Editor files
+/.idea/
+/.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# OS Files
+Thumbs.db
+
+# Testing
+/coverage/
+/.phpunit.result.cache
+/.phpunit.cache
+phpunit.xml
+
+# Environment
+.env
+.env.local
+.env.testing
+.env.backup
+
+# Logs
+*.log
+/storage/logs/
+
+# Cache & Temp files
+/.cache/
+/tmp/
+/.tmp/
+
+# Build artifacts
+/build/
+/dist/
+
+# Documentation builds
+/docs/_build/
+
+# Backup files
+*.backup
+*.bak
+*.tmp
+
+# Database
+*.sqlite
+*.db
+
+# Generated files
+*.generated.php
+
+# PHP-CS-Fixer
+/.php_cs
+/.php_cs.cache
+/.php-cs-fixer.cache
+
+# PHPStan
+/.phpstan.cache
+
+# Psalm
+/.psalm.cache
+
+# PHAR files
+*.phar
+
+# Local development
+/playground/
+/sandbox/
+/demo/

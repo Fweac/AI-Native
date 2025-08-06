@@ -1,0 +1,58 @@
+{
+    "name": "ai-native/laravel",
+    "description": "Laravel AI-Native API Framework - Générez des APIs Laravel complètes à partir de schémas JSON",
+    "type": "library",
+    "license": "MIT",
+    "keywords": [
+        "laravel",
+        "api",
+        "json",
+        "generator",
+        "ai-native",
+        "schema",
+        "rapid-development"
+    ],
+    "authors": [
+        {
+            "name": "AI-Native Team",
+            "email": "contact@ai-native.dev"
+        }
+    ],
+    "require": {
+        "php": "^8.1",
+        "illuminate/support": "^10.0 || ^11.0 || ^12.0",
+        "illuminate/console": "^10.0 || ^11.0 || ^12.0",
+        "illuminate/filesystem": "^10.0 || ^11.0 || ^12.0",
+        "illuminate/database": "^10.0 || ^11.0 || ^12.0"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^10.0",
+        "orchestra/testbench": "^8.0 || ^9.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "AiNative\\Laravel\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "AiNative\\Laravel\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "AiNative\\Laravel\\AiNativeServiceProvider"
+            ]
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true,
+    "scripts": {
+        "test": "phpunit",
+        "test-coverage": "phpunit --coverage-html coverage"
+    },
+    "config": {
+        "sort-packages": true
+    }
+}

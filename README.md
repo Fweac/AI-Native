@@ -21,16 +21,51 @@
 
 ## 📦 Installation
 
+### Installation via Packagist (Recommandée)
+
 Installez le package via Composer :
 
 ```bash
 composer require ai-native/laravel
 ```
 
-Installez les dépendances et la configuration :
+### Installation depuis GitHub (Version de développement)
+
+Si vous souhaitez installer directement depuis le repository GitHub :
+
+1. **Ajoutez le repository dans votre `composer.json`** :
+
+```json
+{
+    "repositories": [
+        {
+            "type": "vcs",
+            "url": "https://github.com/votre-username/ai-native-laravel"
+        }
+    ]
+}
+```
+
+2. **Installez le package** :
 
 ```bash
-php artisan ai-native:install --sanctum
+composer require ai-native/laravel:dev-main
+```
+
+### Configuration initiale
+
+Après installation, configurez le package :
+
+```bash
+php artisan vendor:publish --provider="AiNative\Laravel\AiNativeServiceProvider"
+```
+
+Installez les dépendances optionnelles (Sanctum pour l'authentification) :
+
+```bash
+composer require laravel/sanctum
+php artisan vendor:publish --provider="Laravel\Sanctum\SanctumServiceProvider"
+php artisan migrate
 ```
 
 ## 🎯 Utilisation Rapide

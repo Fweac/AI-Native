@@ -1,0 +1,118 @@
+{
+    "version": "1.0.0",
+    "generated_at": "2025-08-07T15:30:00.000Z",
+    "schema_hash": "abc123def456789",
+    "schema_content": {
+        "meta": {
+            "project": "ExampleAPI",
+            "auth": {
+                "enabled": true,
+                "provider": "sanctum"
+            }
+        },
+        "models": {
+            "User": {
+                "fields": {
+                    "name": "string|required",
+                    "email": "string|email|unique"
+                },
+                "routes": ["list", "show", "create", "update", "delete"]
+            }
+        }
+    },
+    "files": {
+        "models": {
+            "app/Models/User.php": {
+                "generated_at": "2025-08-07T15:30:01.000Z",
+                "hash": "def789abc123456",
+                "size": 2048,
+                "model_name": "User"
+            }
+        },
+        "controllers": {
+            "app/Http/Controllers/UserController.php": {
+                "generated_at": "2025-08-07T15:30:02.000Z",
+                "hash": "456789def123abc",
+                "size": 4096,
+                "model_name": "User",
+                "routes": ["index", "show", "store", "update", "destroy"]
+            }
+        },
+        "migrations": {
+            "database/migrations/2025_08_07_153001_create_users_table.php": {
+                "generated_at": "2025-08-07T15:30:03.000Z",
+                "hash": "789abc456def123",
+                "size": 1536,
+                "table_name": "users",
+                "model_name": "User"
+            }
+        },
+        "factories": {
+            "database/factories/UserFactory.php": {
+                "generated_at": "2025-08-07T15:30:04.000Z",
+                "hash": "123456789abcdef",
+                "size": 1024,
+                "model_name": "User"
+            }
+        },
+        "seeders": {
+            "database/seeders/UserSeeder.php": {
+                "generated_at": "2025-08-07T15:30:05.000Z",
+                "hash": "abcdef123456789",
+                "size": 768,
+                "model_name": "User"
+            },
+            "database/seeders/DatabaseSeeder.php": {
+                "generated_at": "2025-08-07T15:30:06.000Z",
+                "hash": "987654321fedcba",
+                "size": 512,
+                "modified": true
+            }
+        },
+        "policies": {
+            "app/Policies/UserPolicy.php": {
+                "generated_at": "2025-08-07T15:30:07.000Z",
+                "hash": "fedcba987654321",
+                "size": 2560,
+                "model_name": "User"
+            }
+        },
+        "observers": {
+            "app/Observers/UserObserver.php": {
+                "generated_at": "2025-08-07T15:30:08.000Z",
+                "hash": "321fedcba987654",
+                "size": 1792,
+                "model_name": "User"
+            }
+        },
+        "routes": {
+            "routes/api.php": {
+                "generated_at": "2025-08-07T15:30:09.000Z",
+                "hash": "654321fedcba987",
+                "size": 3072,
+                "modified": true,
+                "section": "AI-Native Generated Routes"
+            }
+        },
+        "config": {
+            "app/Providers/AuthServiceProvider.php": {
+                "generated_at": "2025-08-07T15:30:10.000Z",
+                "hash": "ba987654321fedc",
+                "size": 1280,
+                "modified": true
+            }
+        }
+    },
+    "metadata": {
+        "total_files": 9,
+        "ai_native_version": "1.0.0",
+        "laravel_version": "11.x",
+        "generation_time_ms": 1250,
+        "warnings": [],
+        "notes": [
+            "Modified existing DatabaseSeeder.php to include UserSeeder",
+            "Updated routes/api.php with new API routes",
+            "Generated AuthServiceProvider with UserPolicy registration"
+        ]
+    }
+}

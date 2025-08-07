@@ -4,20 +4,37 @@
 [![Total Downloads](https://img.shields.io/packagist/dt/ai-native/laravel.svg?style=flat-square)](https://packagist.org/packages/ai-native/laravel)
 [![License](https://img.shields.io/packagist/l/ai-native/laravel.svg?style=flat-square)](https://packagist.org/packages/ai-native/laravel)
 
-**AI-Native Laravel** est un package qui génère des APIs Laravel complètes à partir de schémas JSON déclaratifs. Conçu pour être utilisé avec des IA comme Claude, ChatGPT, ou pour le développement rapide de prototypes.
+**AI-Native Laravel** est un package Laravel sophistiqué qui génère des APIs complètes à partir de schémas JSON déclaratifs. Spécialement conçu pour le développement assisté par IA et les développeurs, ce package permet de créer des backends Laravel complets grâce à un simple fichier de configuration JSON.
+
+Le package supporte Laravel 10, 11 et 12, et fournit une génération de code complète incluant les modèles, contrôleurs, migrations, factories, seeders, policies, observers, authentification et routes.
 
 ## 🚀 Fonctionnalités
 
-- **Génération automatique** de modèles, migrations, contrôleurs et routes
-- **Relations complexes** (belongsTo, hasMany, belongsToMany, polymorphes)
-- **Validation automatique** basée sur les règles Laravel
-- **Système d'authentification** intégré (Laravel Sanctum)
-- **Gestion des fichiers** avec storage automatique
-- **Hooks et observers** personnalisés
-- **Policies et permissions** par rôle
-- **Cache automatique** configurable
+### Architecture Avancée
+- **Système de génération JSON-vers-Laravel** - 9 générateurs spécialisés
+- **ManifestManager intelligent** - Suivi des fichiers avec versioning et nettoyage
+- **Parseur de schéma avancé** - Support de configurations complexes
+- **Suite de commandes multi-options** - 3 commandes Artisan principales
+
+### Génération Complète
+- **Génération automatique** de tous les composants Laravel
+- **Relations complexes** (belongsTo, hasMany, belongsToMany, morphTo, polymorphes)
+- **Validation automatique** basée sur les règles Laravel intégrées
+- **Système d'authentification** complet (Laravel Sanctum/basic)
+- **Gestion avancée des fichiers** avec endpoints upload/download automatiques
+- **Hooks et observers** personnalisés avec lifecycle events
+- **Policies et permissions** par rôle avec autorisation granulaire
+- **Cache automatique** configurable avec TTL
 - **Support complet des scopes** Eloquent
 - **Tables pivot** avec champs additionnels
+
+### Nouvelles Fonctionnalités Avancées
+- **Système de versioning intelligent** - JSON comme source de vérité
+- **Nettoyage automatique** - Suppression des fichiers obsolètes
+- **Endpoints de fichiers automatiques** - Upload/download pour chaque champ file/files
+- **Auto-configuration environnement** - Configuration .env depuis le JSON
+- **Support fichiers multiples** - Gestion intelligente des uploads
+- **Manifest et historique complet** - Traçabilité des générations
 
 ## 📦 Installation
 
@@ -29,7 +46,7 @@ Installez le package via Composer :
 composer require ai-native/laravel
 ```
 
-### Installation depuis GitHub (Version de développement)
+### Installation depuis GitHub
 
 Si vous souhaitez installer directement depuis le repository GitHub :
 
@@ -40,7 +57,7 @@ Si vous souhaitez installer directement depuis le repository GitHub :
     "repositories": [
         {
             "type": "vcs",
-            "url": "https://github.com/votre-username/ai-native-laravel"
+            "url": "https://github.com/Fweac/AI-Native"
         }
     ]
 }
@@ -57,10 +74,18 @@ composer require ai-native/laravel:dev-main
 Après installation, configurez le package :
 
 ```bash
+# Publier la configuration et les stubs
 php artisan vendor:publish --provider="AiNative\Laravel\AiNativeServiceProvider"
 ```
 
-Installez les dépendances optionnelles (Sanctum pour l'authentification) :
+Pour une installation complète avec authentification :
+
+```bash
+# Installation avec Laravel Sanctum (recommandée)
+php artisan ai-native:install --sanctum
+```
+
+Ou manuellement :
 
 ```bash
 composer require laravel/sanctum
@@ -87,21 +112,43 @@ php artisan migrate
       "fields": {
         "name": "string|required|max:255",
         "email": "string|email|unique|required",
-        "password": "string|required|min:8"
+        "password": "string|required|min:8",
+        "avatar": "file:images|nullable|image|max:2048"
       },
-      "routes": ["list", "show", "create", "update"]
+      "routes": ["list", "show", "create", "update"],
+      "factory": true,
+      "seeder": true
     },
     "Post": {
       "fields": {
         "user_id": "foreign:users|required",
         "title": "string|required|max:255",
         "content": "longText|required",
-        "published": "boolean|default:false"
+        "status": "enum:draft,published,archived|default:draft",
+        "documents": "files:documents|nullable"
       },
       "relations": {
         "author": "belongsTo:User,user_id"
       },
-      "routes": ["list", "show", "create", "update", "delete"]
+      "routes": ["list", "show", "create", "update", "delete"],
+      "scopes": {
+        "published": "where:status,published"
+      },
+      "factory": { "count": 50 },
+      "seeder": true
+    }
+  },
+  "storage": {
+    "disks": {
+      "images": {
+        "driver": "local",
+        "root": "storage/app/images",
+        "url": "/storage/images"
+      },
+      "documents": {
+        "driver": "local",
+        "root": "storage/app/documents"
+      }
     }
   }
 }
@@ -110,7 +157,14 @@ php artisan migrate
 ### 2. Générez votre API
 
 ```bash
+# Génération complète (mode clean par défaut)
 php artisan ai-native:generate schema.json
+
+# Aperçu avant génération
+php artisan ai-native:generate schema.json --preview
+
+# Mode fusion avec fichiers existants
+php artisan ai-native:generate schema.json --merge
 ```
 
 ### 3. Exécutez les migrations
@@ -126,6 +180,8 @@ Votre API est maintenant disponible avec des endpoints comme :
 - `POST /api/posts` - Créer un article
 - `GET /api/posts/{post}` - Détail d'un article
 - `PUT /api/posts/{post}` - Mettre à jour un article
+- `POST /api/posts/{post}/upload/documents` - Upload documents
+- `GET /api/posts/{post}/download/documents` - Download documents
 
 ## 📚 Documentation Complète
 
@@ -135,29 +191,58 @@ Votre API est maintenant disponible avec des endpoints comme :
 |------|---------|-------------|
 | string | `"string|required|max:255"` | Chaîne de caractères |
 | text | `"text|nullable"` | Texte long |
+| longText | `"longText|required"` | Très long texte |
 | integer | `"integer|min:0"` | Nombre entier |
+| bigInteger | `"bigInteger|unsigned"` | Grand entier |
 | boolean | `"boolean|default:false"` | Booléen |
 | date | `"date|nullable"` | Date |
 | datetime | `"datetime|nullable"` | Date et heure |
+| timestamp | `"timestamp|default:now"` | Timestamp |
 | json | `"json|nullable"` | Données JSON |
+| float | `"float|min:0"` | Nombre décimal |
+| uuid | `"uuid|unique"` | UUID unique |
+| decimal | `"decimal:10,2|required"` | Nombre décimal précis |
 | enum | `"enum:draft,published|default:draft"` | Énumération |
 | foreign | `"foreign:users|required"` | Clé étrangère |
-| file | `"file:images|nullable|image"` | Fichier unique |
-| files | `"files:documents|nullable"` | Fichiers multiples |
+| file | `"file:images|nullable|image|max:2048"` | Fichier unique avec upload/download automatique |
+| files | `"files:documents|nullable"` | Fichiers multiples avec upload/download automatique |
 
 ### Relations Supportées
 
 ```json
 {
   "relations": {
-    "author": "belongsTo:User",
-    "posts": "hasMany:Post",
-    "tags": "belongsToMany:Tag,post_tag,post_id,tag_id",
+    "author": "belongsTo:User,user_id",
+    "posts": "hasMany:Post,user_id",
+    "profile": "hasOne:Profile,user_id",
+    "tags": "belongsToMany:Tag,post_tags,post_id,tag_id",
     "comments": "morphMany:Comment,commentable",
-    "commentable": "morphTo"
+    "commentable": "morphTo",
+    "images": "morphedByMany:Image,imageable"
   }
 }
 ```
+
+### Gestion Automatique des Fichiers
+
+Pour chaque champ `file:` ou `files:`, le système génère automatiquement :
+
+```json
+{
+  "User": {
+    "fields": {
+      "avatar": "file:images|nullable|image|max:2048",
+      "documents": "files:documents|nullable"
+    }
+  }
+}
+```
+
+**Routes automatiquement créées :**
+- `POST /api/users/{user}/upload/avatar` - Upload avatar
+- `GET /api/users/{user}/download/avatar` - Download avatar
+- `POST /api/users/{user}/upload/documents` - Upload documents
+- `GET /api/users/{user}/download/documents` - Download documents
 
 ### Scopes Automatiques
 
@@ -166,7 +251,8 @@ Votre API est maintenant disponible avec des endpoints comme :
   "scopes": {
     "published": "where:status,published",
     "recent": "orderBy:created_at,desc",
-    "active": "where:is_active,true"
+    "active": "where:is_active,true",
+    "byStatus": "where:status,{status}"
   }
 }
 ```
@@ -183,6 +269,10 @@ Votre API est maintenant disponible avec des endpoints comme :
         "template": "welcome",
         "to": "$email",
         "queue": true
+      },
+      {
+        "action": "log",
+        "message": "User created: $name"
       }
     ],
     "beforeUpdate": "validateData",
@@ -205,28 +295,54 @@ Votre API est maintenant disponible avec des endpoints comme :
 }
 ```
 
+### Authentification Automatique
+
+Quand `auth.enabled` est activé dans le schéma, le système génère automatiquement :
+
+**Endpoints d'authentification (Sanctum) :**
+- `POST /api/register` - Inscription avec token Bearer
+- `POST /api/login` - Connexion avec token Bearer  
+- `POST /api/logout` - Déconnexion (auth required)
+- `GET /api/user` - Utilisateur authentifié (auth required)
+
+```json
+{
+  "meta": {
+    "auth": {
+      "enabled": true,
+      "provider": "sanctum",
+      "routes": ["login", "register", "logout", "user"]
+    }
+  }
+}
+```
+
 ## 🛠 Commandes Disponibles
 
-### Génération
+### Génération Avancée
 
 ```bash
-# Générer tous les composants
+# Génération complète (mode clean par défaut - supprime les fichiers obsolètes)
 php artisan ai-native:generate schema.json
 
-# Générer seulement les modèles
-php artisan ai-native:generate schema.json --only=models
+# Mode clean explicite
+php artisan ai-native:generate schema.json --clean
+
+# Mode fusion avec fichiers existants
+php artisan ai-native:generate schema.json --merge
 
 # Aperçu sans créer de fichiers
-php artisan ai-native:generate schema.json --dry-run
+php artisan ai-native:generate schema.json --preview
 
-# Forcer l'écrasement des fichiers existants
-php artisan ai-native:generate schema.json --force
+# Générer seulement des composants spécifiques
+php artisan ai-native:generate schema.json --only=models,migrations
+php artisan ai-native:generate schema.json --only=controllers,routes
 ```
 
 ### Validation
 
 ```bash
-# Valider un schéma
+# Valider un schéma avant génération
 php artisan ai-native:validate schema.json
 ```
 
@@ -237,7 +353,27 @@ php artisan ai-native:validate schema.json
 php artisan ai-native:install --sanctum
 ```
 
-## 🔧 Configuration Avancée
+## 🔧 Architecture et Système de Versioning
+
+### Système de Manifest Intelligent
+
+Chaque génération crée un fichier `.ai-native-manifest.json` qui :
+- **Trace tous les fichiers générés** avec métadonnées (hash, taille, timestamp)
+- **Détecte automatiquement les changements** de schéma via hash comparison
+- **Nettoie intelligemment** les fichiers obsolètes
+- **Maintient un historique** complet des générations
+- **Permet le rollback** si nécessaire
+
+### JSON comme Source de Vérité
+
+Le système garantit que :
+- ✅ **Le JSON prime toujours** sur les fichiers existants
+- ✅ **Pas de conflits** - Plus de warnings "file exists"
+- ✅ **Traçabilité complète** - Historique des changements
+- ✅ **Performance optimisée** - Skip si aucun changement
+- ✅ **Cleanup intelligent** - Supprime uniquement les fichiers obsolètes
+
+### Configuration Avancée
 
 Le fichier de configuration `config/ai-native.php` permet de personnaliser :
 
@@ -256,6 +392,14 @@ return [
             'enabled' => true,
             'default_ttl' => 3600,
         ],
+        'file_uploads' => [
+            'max_size' => 10240, // 10MB
+            'allowed_types' => ['image', 'document'],
+        ],
+    ],
+    'manifest' => [
+        'enabled' => true,
+        'history_limit' => 10,
     ],
     // ...
 ];
@@ -263,81 +407,132 @@ return [
 
 ## 🤖 Optimisation pour l'IA
 
-Ce package est spécialement conçu pour être utilisé avec des IA :
+Ce framework est spécifiquement conçu pour le développement assisté par IA :
 
-- **Syntaxe simplifiée** : JSON déclaratif facile à générer
-- **Contexte réduit** : Moins de tokens nécessaires
-- **Patterns standardisés** : Structure cohérente pour l'IA
-- **Validation automatique** : Prévient les erreurs communes
-- **Documentation intégrée** : Auto-génération des commentaires
+### Fonctionnalités AI-Friendly
+- **Usage minimal de tokens** : Schéma JSON compact réduit les besoins en contexte
+- **Patterns standardisés** : Structure cohérente que l'IA peut apprendre et répliquer
+- **Auto-génération complète** : Une commande génère l'application Laravel entière
+- **Validation intégrée** : Prévient les erreurs communes de code généré par IA
+- **Auto-documentation** : Code généré avec commentaires et documentation
+- **Contrôle de version** : Suivi des changements et rollback si nécessaire
 
-### Exemple d'utilisation avec Claude
-
+### Patterns d'usage IA
 ```
-Utilisateur: "Crée-moi une API pour gérer des tâches avec utilisateurs, projets et commentaires"
+Humain: "Créer une API de gestion de tâches avec utilisateurs, projets, tâches et commentaires"
 
-Claude: Je vais créer un schéma JSON pour votre API de gestion de tâches...
+IA: Je vais créer un schéma JSON complet pour votre API de gestion de tâches :
 
 {
   "meta": {
-    "project": "TaskAPI",
+    "project": "TaskManager", 
     "auth": { "enabled": true, "provider": "sanctum" }
   },
   "models": {
-    "User": { ... },
-    "Project": { ... },
-    "Task": { ... },
-    "Comment": { ... }
+    "User": { /* modèle utilisateur avec authentification */ },
+    "Project": { /* modèle projet avec relation utilisateur */ },
+    "Task": { /* modèle tâche avec relations projet et utilisateur */ },
+    "Comment": { /* modèle commentaire polymorphe */ }
   }
 }
 
-Ensuite exécutez : php artisan ai-native:generate task-api.json
+Commande : php artisan ai-native:generate task-manager.json
 ```
 
 ## 📋 Exemples Complets
 
-### API E-commerce
+### API E-commerce avec Auto-Configuration
 
 ```json
 {
   "meta": {
     "project": "EcommerceAPI",
-    "auth": { "enabled": true, "provider": "sanctum" }
+    "version": "1.0.0",
+    "auth": {
+      "enabled": true,
+      "provider": "sanctum",
+      "routes": ["login", "register", "logout", "user"]
+    },
+    "database": {
+      "connection": "mysql",
+      "host": "localhost",
+      "database": "ecommerce_api",
+      "username": "root",
+      "password": "secret"
+    }
   },
   "models": {
     "Product": {
       "fields": {
-        "name": "string|required",
-        "price": "decimal:8,2|required",
-        "stock": "integer|default:0",
-        "images": "files:products|nullable"
+        "name": "string|required|max:255",
+        "price": "decimal:8,2|required|min:0",
+        "stock": "integer|default:0|min:0",
+        "images": "files:products|nullable",
+        "active": "boolean|default:true"
       },
       "relations": {
-        "category": "belongsTo:Category",
-        "orders": "belongsToMany:Order,order_product"
-      }
+        "category": "belongsTo:Category,category_id",
+        "orders": "belongsToMany:Order,order_product,product_id,order_id"
+      },
+      "routes": ["list", "show", "create", "update", "delete"],
+      "scopes": {
+        "active": "where:active,true",
+        "inStock": "where:stock,>,0"
+      },
+      "factory": { "count": 50 },
+      "seeder": true
     },
     "Order": {
       "fields": {
         "user_id": "foreign:users|required",
-        "status": "enum:pending,paid,shipped|default:pending",
-        "total": "decimal:10,2|required"
+        "status": "enum:pending,paid,shipped,delivered|default:pending",
+        "total": "decimal:10,2|required|min:0"
       },
       "relations": {
-        "user": "belongsTo:User",
-        "products": "belongsToMany:Product,order_product"
+        "user": "belongsTo:User,user_id",
+        "products": "belongsToMany:Product,order_product,order_id,product_id"
+      },
+      "routes": ["list", "show", "create", "update"],
+      "policies": {
+        "view": "owner|role:admin",
+        "create": "authenticated"
+      },
+      "factory": { "count": 100 },
+      "seeder": true
+    }
+  },
+  "storage": {
+    "disks": {
+      "products": {
+        "driver": "local",
+        "root": "storage/app/products",
+        "url": "/storage/products"
       }
     }
   }
 }
 ```
 
-### API Blog avec Tags
+**Ce schéma génère automatiquement :**
+- ✅ Modèles avec relations et scopes
+- ✅ Migrations avec clés étrangères
+- ✅ Contrôleurs avec CRUD + upload/download d'images
+- ✅ Routes API + authentification complète
+- ✅ Factories et seeders avec dépendances
+- ✅ Configuration storage et .env
+- ✅ Validation et policies
+
+### API Blog avec Tags Polymorphes
 
 ```json
 {
   "models": {
     "Post": {
+      "fields": {
+        "title": "string|required|max:255",
+        "content": "longText|required",
+        "status": "enum:draft,published|default:draft"
+      },
       "relations": {
         "tags": "morphedByMany:Tag,taggable"
       }
@@ -356,46 +551,55 @@ Ensuite exécutez : php artisan ai-native:generate task-api.json
       "fields": {
         "tag_id": "foreign:tags|required",
         "taggable_id": "integer|required",
-        "taggable_type": "string|required"
+        "taggable_type": "string|required",
+        "order": "integer|default:0"
       }
     }
   }
 }
 ```
 
-## 🧪 Tests
+## 📚 Documentation Complète
 
-```bash
-composer test
-```
+- **[JSON Keywords](JSON_KEYWORDS.md)** - Documentation complète de tous les mots-clés supportés dans le schéma JSON
+- **[GitHub Repository](https://github.com/Fweac/AI-Native)** - Code source et issues
 
-## 📖 Changelog
+## 📊 Statut des Fonctionnalités
 
-Consultez [CHANGELOG.md](CHANGELOG.md) pour les détails des versions.
+### ✅ **Fonctionnalités Complètement Implémentées (8/8)**
+1. ✅ Suppression automatique de welcome.blade.php
+2. ✅ Système de seeders avec DatabaseSeeder et ordre de dépendances
+3. ✅ Remplacement de --force par --clean/merge/preview
+4. ✅ Routes API d'authentification automatiques (Sanctum/basic)
+5. ✅ Auto-configuration .env depuis le JSON
+6. ✅ Système de versioning et nettoyage intelligent
+7. ✅ Support complet des fichiers avec endpoints upload/download
+8. ✅ Documentation JSON Keywords complète (400+ lignes)
 
-## 🤝 Contribuer
+## 🎯 Notes d'Usage Importantes
 
-1. Fork le projet
-2. Créez une branche (`git checkout -b feature/amazing-feature`)
-3. Commitez vos changements (`git commit -m 'Add amazing feature'`)
-4. Push vers la branche (`git push origin feature/amazing-feature`)
-5. Ouvrez une Pull Request
+- **Comportement par défaut** : `--clean` mode par défaut - supprime automatiquement les fichiers obsolètes
+- **JSON comme source de vérité** : Le schéma prend toujours le pas sur les fichiers existants
+- **Pas de conflits** : Nettoyage intelligent élimine les warnings "file exists"
+- **Traçabilité complète** : Historique complet de toutes les générations avec métadonnées
+- **Performance optimisée** : Skip la génération si aucun changement détecté
+- **Preview en premier** : Utilisez toujours `--preview` pour les schémas complexes
 
 ## 📄 Licence
 
-Ce package est open-source sous licence [MIT](LICENSE.md).
+Ce package est propriétaire. Voir [LICENSE](LICENSE) pour les détails.
 
 ## 🙏 Crédits
 
-- Créé pour faciliter le développement d'APIs avec l'aide de l'IA
+- Créé pour le développement d'APIs Laravel assisté par IA
+- Solution complète pour la génération de code avec gestion d'entreprise
 - Basé sur Laravel et ses meilleures pratiques
-- Inspiré par la philosophie "convention over configuration"
 
 ## 🆘 Support
 
-- [Documentation](https://github.com/ai-native/laravel/wiki)
-- [Issues GitHub](https://github.com/ai-native/laravel/issues)
-- [Discussions](https://github.com/ai-native/laravel/discussions)
+- [Documentation JSON Keywords](JSON_KEYWORDS.md)
+- [GitHub Issues](https://github.com/Fweac/AI-Native/issues)
+- [Repository GitHub](https://github.com/Fweac/AI-Native)
 
 ---
 

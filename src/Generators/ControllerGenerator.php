@@ -15,6 +15,7 @@ class ControllerGenerator extends BaseGenerator
         $policies = $parser->getModelPolicies($modelName);
         $hooks = $parser->getModelHooks($modelName);
         $validationRules = $parser->getValidationRules($modelName);
+        $fileFields = $this->getFileFields($modelName, $parser);
         
         $className = Str::studly($modelName) . 'Controller';
         $modelClass = Str::studly($modelName);
@@ -22,7 +23,13 @@ class ControllerGenerator extends BaseGenerator
         $routeParameter = Str::snake($modelName);
         
         $methods = $this->generateMethods($routes, $modelClass, $variableName, $routeParameter, $filters, $validationRules, $hooks);
-        $imports = $this->generateImports($modelClass);
+        
+        // Add file upload/download methods if there are file fields
+        if (!empty($fileFields)) {
+            $fileMethods = $this->generateFileMethods($modelClass, $variableName, $fileFields);
+            $methods .= "\n\n    " . $fileMethods;
+        }
+        $imports = $this->generateImports($modelClass, !empty($fileFields));
         $middlewares = $this->generateMiddlewares($policies);
         
         $stub = $this->getStub('controller');
@@ -244,14 +251,21 @@ public function destroy({$modelClass} \${$variableName}): JsonResponse
 METHOD;
     }
 
-    protected function generateImports(string $modelClass): string
+    protected function generateImports(string $modelClass, bool $hasFileFields = false): string
     {
-        return <<<IMPORTS
-use App\Http\Controllers\Controller;
-use App\Models\\{$modelClass};
-use Illuminate\Http\JsonResponse;
-use Illuminate\Http\Request;
-IMPORTS;
+        $imports = [
+            'use App\\Http\\Controllers\\Controller;',
+            'use App\\Models\\' . $modelClass . ';',
+            'use Illuminate\\Http\\JsonResponse;',
+            'use Illuminate\\Http\\Request;'
+        ];
+        
+        if ($hasFileFields) {
+            $imports[] = 'use Illuminate\\Support\\Facades\\Storage;';
+            $imports[] = 'use Illuminate\\Http\\Response;';
+        }
+        
+        return implode("\n", $imports);
     }
 
     protected function generateMiddlewares(array $policies): string
@@ -283,6 +297,145 @@ public function __construct()
         {$middlewareString}
     }
 MIDDLEWARE;
+    }
+
+    protected function getFileFields(string $modelName, SchemaParser $parser): array
+    {
+        $model = $parser->getModel($modelName);
+        $fields = $model['fields'] ?? [];
+        $fileFields = [];
+
+        foreach ($fields as $fieldName => $fieldDefinition) {
+            $fieldType = $parser->parseFieldType($fieldName, $fieldDefinition);
+            if (isset($fieldType['is_file']) && $fieldType['is_file']) {
+                $fileFields[$fieldName] = [
+                    'multiple' => $fieldType['multiple'] ?? false,
+                    'disk' => $fieldType['storage_disk'] ?? 'public',
+                    'validation' => $fieldType['validations'] ?? 'file'
+                ];
+            }
+        }
+
+        return $fileFields;
+    }
+
+    protected function generateFileMethods(string $modelClass, string $variableName, array $fileFields): string
+    {
+        $methods = [];
+        
+        foreach ($fileFields as $fieldName => $config) {
+            $methodName = Str::studly($fieldName);
+            $disk = $config['disk'];
+            $multiple = $config['multiple'];
+            
+            // Generate upload method
+            if ($multiple) {
+                $methods[] = $this->generateMultipleFileUploadMethod($modelClass, $variableName, $fieldName, $methodName, $disk);
+            } else {
+                $methods[] = $this->generateSingleFileUploadMethod($modelClass, $variableName, $fieldName, $methodName, $disk);
+            }
+            
+            // Generate download method
+            $methods[] = $this->generateFileDownloadMethod($modelClass, $variableName, $fieldName, $methodName, $disk, $multiple);
+        }
+        
+        return implode("\n\n    ", $methods);
+    }
+
+    protected function generateSingleFileUploadMethod(string $modelClass, string $variableName, string $fieldName, string $methodName, string $disk): string
+    {
+        return <<<METHOD
+public function upload{$methodName}(Request \$request, {$modelClass} \${$variableName}): JsonResponse
+{
+    \$request->validate([
+        'file' => 'required|file|max:10240', // 10MB max
+    ]);
+
+    \$file = \$request->file('file');
+    \$path = \$file->store('{$fieldName}', '{$disk}');
+
+    \${$variableName}->update(['{$fieldName}' => \$path]);
+
+    return response()->json([
+        'message' => 'File uploaded successfully',
+        'path' => \$path,
+        'url' => \Storage::disk('{$disk}')->url(\$path)
+    ]);
+}
+METHOD;
+    }
+
+    protected function generateMultipleFileUploadMethod(string $modelClass, string $variableName, string $fieldName, string $methodName, string $disk): string
+    {
+        return <<<METHOD
+public function upload{$methodName}(Request \$request, {$modelClass} \${$variableName}): JsonResponse
+{
+    \$request->validate([
+        'files' => 'required|array',
+        'files.*' => 'file|max:10240', // 10MB max per file
+    ]);
+
+    \$paths = [];
+    foreach (\$request->file('files') as \$file) {
+        \$paths[] = \$file->store('{$fieldName}', '{$disk}');
+    }
+
+    \$existing = \${$variableName}->{$fieldName} ?: [];
+    \$allPaths = array_merge(\$existing, \$paths);
+    
+    \${$variableName}->update(['{$fieldName}' => \$allPaths]);
+
+    return response()->json([
+        'message' => 'Files uploaded successfully',
+        'paths' => \$paths,
+        'urls' => array_map(fn(\$path) => \Storage::disk('{$disk}')->url(\$path), \$paths)
+    ]);
+}
+METHOD;
+    }
+
+    protected function generateFileDownloadMethod(string $modelClass, string $variableName, string $fieldName, string $methodName, string $disk, bool $multiple): string
+    {
+        if ($multiple) {
+            return <<<METHOD
+public function download{$methodName}(Request \$request, {$modelClass} \${$variableName}): JsonResponse
+{
+    \$files = \${$variableName}->{$fieldName} ?: [];
+    
+    if (empty(\$files)) {
+        return response()->json(['message' => 'No files found'], 404);
+    }
+
+    \$urls = [];
+    foreach (\$files as \$path) {
+        if (\Storage::disk('{$disk}')->exists(\$path)) {
+            \$urls[] = [
+                'path' => \$path,
+                'url' => \Storage::disk('{$disk}')->url(\$path),
+                'name' => basename(\$path)
+            ];
+        }
+    }
+
+    return response()->json([
+        'files' => \$urls
+    ]);
+}
+METHOD;
+        } else {
+            return <<<METHOD
+public function download{$methodName}({$modelClass} \${$variableName})
+{
+    \$path = \${$variableName}->{$fieldName};
+    
+    if (!\$path || !\Storage::disk('{$disk}')->exists(\$path)) {
+        abort(404, 'File not found');
+    }
+
+    return \Storage::disk('{$disk}')->download(\$path);
+}
+METHOD;
+        }
     }
 
     protected function getStub(string $type): string

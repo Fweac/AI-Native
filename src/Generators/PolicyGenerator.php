@@ -34,10 +34,11 @@ class PolicyGenerator
         $content[] = "use Illuminate\\Auth\\Access\\HandlesAuthorization;";
         $content[] = "use Illuminate\\Auth\\Access\\Response;";
         $content[] = "";
-        $content[] = "class {$className}";
-        $content[] = "{";
-        $content[] = "    use HandlesAuthorization;";
-        $content[] = "";
+    $content[] = "class {$className}";
+    $content[] = "{";
+    $content[] = "    use HandlesAuthorization;";
+    $content[] = "";
+    $content[] = "    // >>> AI-NATIVE POLICY METHODS START";
         
         // Add policy methods
         $standardMethods = ['viewAny', 'view', 'create', 'update', 'delete', 'restore', 'forceDelete'];
@@ -58,7 +59,8 @@ class PolicyGenerator
             }
         }
         
-        $content[] = "}";
+    $content[] = "    // >>> AI-NATIVE POLICY METHODS END";
+    $content[] = "}";
         
         return implode("\n", $content);
     }

@@ -22,14 +22,15 @@ class ControllerGenerator extends BaseGenerator
         $variableName = Str::camel($modelName);
         $routeParameter = Str::snake($modelName);
         
-        $methods = $this->generateMethods($routes, $modelClass, $variableName, $routeParameter, $filters, $validationRules, $hooks);
+    $methods = $this->generateMethods($routes, $modelClass, $variableName, $routeParameter, $filters, $validationRules, $hooks);
+    $hookHandlers = $this->generateHookHandlers($modelClass);
         
         // Add file upload/download methods if there are file fields
         if (!empty($fileFields)) {
             $fileMethods = $this->generateFileMethods($modelClass, $variableName, $fileFields);
             $methods .= "\n\n    " . $fileMethods;
         }
-        $imports = $this->generateImports($modelClass, !empty($fileFields));
+    $imports = $this->generateImports($modelClass, !empty($fileFields), !empty($hooks));
         $middlewares = $this->generateMiddlewares($policies);
         
         $stub = $this->getStub('controller');
@@ -40,15 +41,23 @@ class ControllerGenerator extends BaseGenerator
             '{{ class }}',
             '{{ model }}',
             '{{ middlewares }}',
-            '{{ methods }}'
+            '{{ methods }}',
+            '{{ hooks }}'
         ], [
             'App\\Http\\Controllers',
             $imports,
             $className,
             $modelClass,
             $middlewares,
-            $methods
+            $methods,
+            $hookHandlers
         ], $stub);
+    }
+
+    protected function generateHookHandlers(string $modelClass): string
+    {
+        // We just reference the trait; actual logic centralized
+        return "use \\AiNative\\Laravel\\Traits\\HookDispatching;";
     }
 
     protected function generateMethods(array $routes, string $modelClass, string $variableName, string $routeParameter, array $filters, array $validationRules, array $hooks): string
@@ -83,7 +92,8 @@ class ControllerGenerator extends BaseGenerator
 
     protected function generateIndexMethod(string $modelClass, string $variableName, array $filters): string
     {
-        $queryBuilder = "\${$variableName}Query = {$modelClass}::query();";
+    // Commencer avec la requête de base (chaîne statique construite entièrement avant injection dans heredoc)
+    $queryBuilder = "\$" . $variableName . "Query = {$modelClass}::query();";
         
         // Add default filters
         if (isset($filters['index'])) {
@@ -111,24 +121,54 @@ class ControllerGenerator extends BaseGenerator
             }
         }
         
-        // Add search functionality
-        $queryBuilder .= "\n\n        // Apply search filters from request\n";
-        $queryBuilder .= "        if (\$request->has('search')) {\n";
-        $queryBuilder .= "            \${$variableName}Query->where(function (\$q) use (\$request) {\n";
-        $queryBuilder .= "                // Add searchable fields based on your model\n";
-        $queryBuilder .= "                \$searchTerm = \$request->get('search');\n";
-        $queryBuilder .= "                // Example: \$q->where('title', 'LIKE', \"%{\$searchTerm}%\");\n";
-        $queryBuilder .= "            });\n";
-        $queryBuilder .= "        }";
+        // Dynamic filters from simple filter definitions (schema 'filters')
+        if (!empty($filters) && empty($filters['index'])) {
+            $queryBuilder .= "\n\n        // Apply dynamic request filters";
+            foreach ($filters as $filterName => $filterSpec) {
+                // expecting pattern like where:field,operator,valuePattern OR where:field,value
+                if (is_string($filterSpec) && strpos($filterSpec, 'where:') === 0) {
+                    $specBody = substr($filterSpec, 6); // after 'where:'
+                    $parts = array_map('trim', explode(',', $specBody));
+                    if (count($parts) === 2) {
+                        [$field,$expected] = $parts;
+                        $queryBuilder .= "\n        if (\$request->filled('{$filterName}')) {";
+                        if ($expected === '{'.$filterName.'}') {
+                            $queryBuilder .= "\n            $" . $variableName . "Query->where('{$field}', \$request->get('{$filterName}'));";
+                        } else {
+                            $queryBuilder .= "\n            $" . $variableName . "Query->where('{$field}', '{$expected}');";
+                        }
+                        $queryBuilder .= "\n        }";
+                    } elseif (count($parts) >= 3) {
+                        [$field,$operator,$valuePattern] = $parts;
+                        $queryBuilder .= "\n        if (\$request->filled('{$filterName}')) {";
+                        // build value expression handling %{param}% patterns
+                        $valueExpr = $this->buildValueExpression($valuePattern, $filterName);
+                        $op = strtolower($operator) === 'like' ? 'like' : $operator;
+                        $queryBuilder .= "\n            $" . $variableName . "Query->where('{$field}', '{$op}', {$valueExpr});";
+                        $queryBuilder .= "\n        }";
+                    }
+                }
+            }
+        }
+
+        // Generic search convenience (uses 'search' request param if provided and not already defined as explicit filter)
+    $queryBuilder .= "\n\n        // Apply generic search across common string fields (customize as needed)\n";
+    $queryBuilder .= "        if (\$request->filled('search')) {\n";
+    $queryBuilder .= "            $" . $variableName . "Query->where(function (\$q) use (\$request) {\n";
+    $queryBuilder .= "                \$term = \$request->get('search');\n";
+    $queryBuilder .= "                // Example fields; adjust generation if you want introspection of schema fields\n";
+    $queryBuilder .= "                // \$q->where('title', 'like', '%'.\$term.'%');\n";
+    $queryBuilder .= "            });\n";
+    $queryBuilder .= "        }";
         
         return <<<METHOD
 public function index(Request \$request): JsonResponse
     {
         {$queryBuilder}
         
-        \${$variableName}s = \${$variableName}Query->paginate(\$request->get('per_page', 15));
+    \$items = \${$variableName}Query->paginate(\$request->get('per_page', 15));
         
-        return response()->json(\${$variableName}s);
+    return response()->json(\$items);
     }
 METHOD;
     }
@@ -164,12 +204,9 @@ VALIDATION;
         $beforeCreateHook = '';
         $afterCreateHook = '';
         
-        if (isset($hooks['beforeCreate'])) {
-            $beforeCreateHook = "\n        // Before create hook\n        \$validated = \$this->handleBeforeCreate(\$validated);";
-        }
-        
-        if (isset($hooks['afterCreate'])) {
-            $afterCreateHook = "\n\n        // After create hook\n        \$this->handleAfterCreate(\${$variableName});";
+        if (!empty($hooks)) {
+            $beforeCreateHook = "\n        // Before create hook(s)\n        \$validated = \$this->dispatchHook('beforeCreate', {$modelClass}::class, \$validated);";
+            $afterCreateHook = "\n\n        // After create hook(s)\n        \$this->dispatchHook('afterCreate', \${$variableName});";
         }
         
         return <<<METHOD
@@ -192,6 +229,7 @@ METHOD;
             foreach ($validationRules as $field => $rule) {
                 // For updates, make most rules optional except required ones
                 $updateRule = str_replace('required', 'sometimes', $rule);
+                // Pour update, transformer unique:table,colonne en unique:table,colonne,'.$variableName.'->id si souhaite ignorer courant? Simple: laisser tel quel pour l'instant.
                 $rulesArray[] = "            '{$field}' => '{$updateRule}'";
             }
             $rulesString = implode(",\n", $rulesArray);
@@ -207,12 +245,9 @@ VALIDATION;
         $beforeUpdateHook = '';
         $afterUpdateHook = '';
         
-        if (isset($hooks['beforeUpdate'])) {
-            $beforeUpdateHook = "\n        // Before update hook\n        \$validated = \$this->handleBeforeUpdate(\${$variableName}, \$validated);";
-        }
-        
-        if (isset($hooks['afterUpdate'])) {
-            $afterUpdateHook = "\n\n        // After update hook\n        \$this->handleAfterUpdate(\${$variableName});";
+        if (!empty($hooks)) {
+            $beforeUpdateHook = "\n        // Before update hook(s)\n        \$validated = \$this->dispatchHook('beforeUpdate', \${$variableName}, \$validated);";
+            $afterUpdateHook = "\n\n        // After update hook(s)\n        \$this->dispatchHook('afterUpdate', \${$variableName});";
         }
         
         return <<<METHOD
@@ -232,12 +267,9 @@ METHOD;
         $beforeDeleteHook = '';
         $afterDeleteHook = '';
         
-        if (isset($hooks['beforeDelete'])) {
-            $beforeDeleteHook = "\n        // Before delete hook\n        \$this->handleBeforeDelete(\${$variableName});";
-        }
-        
-        if (isset($hooks['afterDelete'])) {
-            $afterDeleteHook = "\n\n        // After delete hook\n        \$this->handleAfterDelete(\${$variableName});";
+        if (!empty($hooks)) {
+            $beforeDeleteHook = "\n        // Before delete hook(s)\n        \$this->dispatchHook('beforeDelete', \${$variableName});";
+            $afterDeleteHook = "\n\n        // After delete hook(s)\n        \$this->dispatchHook('afterDelete', \${$variableName});";
         }
         
         return <<<METHOD
@@ -251,9 +283,9 @@ public function destroy({$modelClass} \${$variableName}): JsonResponse
 METHOD;
     }
 
-    protected function generateImports(string $modelClass, bool $hasFileFields = false): string
+    protected function generateImports(string $modelClass, bool $hasFileFields = false, bool $hasHooks = false): string
     {
-        $imports = [
+    $imports = [
             'use App\\Http\\Controllers\\Controller;',
             'use App\\Models\\' . $modelClass . ';',
             'use Illuminate\\Http\\JsonResponse;',
@@ -264,8 +296,11 @@ METHOD;
             $imports[] = 'use Illuminate\\Support\\Facades\\Storage;';
             $imports[] = 'use Illuminate\\Http\\Response;';
         }
+        if ($hasHooks) {
+            $imports[] = 'use AiNative\\Laravel\\Traits\\HookDispatching;';
+        }
         
-        return implode("\n", $imports);
+    return implode("\n", $imports);
     }
 
     protected function generateMiddlewares(array $policies): string
@@ -451,8 +486,38 @@ class {{ class }} extends Controller
 {
     {{ middlewares }}
 
+    // >>> AI-NATIVE HOOKS START
+    {{ hooks }}
+    // >>> AI-NATIVE HOOKS END
+
+    // >>> AI-NATIVE METHODS START
     {{ methods }}
+    // >>> AI-NATIVE METHODS END
 }
 STUB;
+    }
+
+    /**
+     * Build dynamic value expression for filter patterns with placeholders {param}.
+     */
+    protected function buildValueExpression(string $pattern, string $param): string
+    {
+        if (strpos($pattern, '{'.$param.'}') !== false) {
+            $segments = explode('{'.$param.'}', $pattern);
+            $exprParts = [];
+            foreach ($segments as $i => $seg) {
+                if ($seg !== '') {
+                    $exprParts[] = var_export($seg, true);
+                }
+                if ($i < count($segments)-1) {
+                    $exprParts[] = "\$request->get('{$param}')";
+                }
+            }
+            if (empty($exprParts)) {
+                return "\$request->get('{$param}')";
+            }
+            return implode(' . ', $exprParts);
+        }
+        return var_export($pattern, true);
     }
 }

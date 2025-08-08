@@ -6,15 +6,19 @@
 
 **AI-Native Laravel** est un package Laravel sophistiqué qui génère des APIs complètes à partir de schémas JSON déclaratifs. Spécialement conçu pour le développement assisté par IA et les développeurs, ce package permet de créer des backends Laravel complets grâce à un simple fichier de configuration JSON.
 
+Il intègre un moteur de fusion (merge) intelligent avec sections délimitées permettant des régénérations non destructives : seules les zones marquées sont mises à jour, vos ajouts manuels en dehors des marqueurs restent intacts.
+
 Le package supporte Laravel 10, 11 et 12, et fournit une génération de code complète incluant les modèles, contrôleurs, migrations, factories, seeders, policies, observers, authentification et routes.
 
 ## 🚀 Fonctionnalités
 
 ### Architecture Avancée
-- **Système de génération JSON-vers-Laravel** - 9 générateurs spécialisés
-- **ManifestManager intelligent** - Suivi des fichiers avec versioning et nettoyage
-- **Parseur de schéma avancé** - Support de configurations complexes
-- **Suite de commandes multi-options** - 3 commandes Artisan principales
+- **Système de génération JSON-vers-Laravel** – 9 générateurs spécialisés
+- **ManifestManager intelligent** – Suivi des fichiers avec versioning et nettoyage
+- **Parseur de schéma avancé** – Support de configurations complexes
+- **Moteur de fusion sectionnelle** – Mise à jour ciblée via marqueurs START/END
+- **Marqueurs idempotents** – Chaque bloc généré est clairement délimité
+- **Suite de commandes multi-options** – 3 commandes Artisan principales
 
 ### Génération Complète
 - **Génération automatique** de tous les composants Laravel
@@ -29,12 +33,14 @@ Le package supporte Laravel 10, 11 et 12, et fournit une génération de code co
 - **Tables pivot** avec champs additionnels
 
 ### Nouvelles Fonctionnalités Avancées
-- **Système de versioning intelligent** - JSON comme source de vérité
-- **Nettoyage automatique** - Suppression des fichiers obsolètes
-- **Endpoints de fichiers automatiques** - Upload/download pour chaque champ file/files
-- **Auto-configuration environnement** - Configuration .env depuis le JSON
-- **Support fichiers multiples** - Gestion intelligente des uploads
-- **Manifest et historique complet** - Traçabilité des générations
+- **Fusion intelligente (--merge)** – Remplacement uniquement des sections marquées
+- **Section Markers** – Blocs délimités (ex: `// >>> AI-NATIVE FILLABLE START/END`)
+- **Système de versioning** – JSON comme source de vérité
+- **Nettoyage automatique** – Suppression des fichiers obsolètes
+- **Endpoints de fichiers automatiques** – Upload/download pour chaque champ file/files
+- **Auto-configuration environnement** – Configuration .env depuis le JSON
+- **Support fichiers multiples** – Gestion intelligente des uploads
+- **Manifest & historique** – Traçabilité complète des générations
 
 ## 📦 Installation
 
@@ -160,11 +166,15 @@ php artisan migrate
 # Génération complète (mode clean par défaut)
 php artisan ai-native:generate schema.json
 
-# Aperçu avant génération
+# Aperçu avant génération (alias: --dry-run)
 php artisan ai-native:generate schema.json --preview
+php artisan ai-native:generate schema.json --dry-run
 
-# Mode fusion avec fichiers existants
+# Mode fusion non destructif (sections marquées mises à jour)
 php artisan ai-native:generate schema.json --merge
+
+# Génération partielle (ex: seulement modèles et migrations)
+php artisan ai-native:generate schema.json --only=models,migrations
 ```
 
 ### 3. Exécutez les migrations
@@ -328,7 +338,7 @@ php artisan ai-native:generate schema.json
 # Mode clean explicite
 php artisan ai-native:generate schema.json --clean
 
-# Mode fusion avec fichiers existants
+# Mode fusion avec fichiers existants (merge sectionnel)
 php artisan ai-native:generate schema.json --merge
 
 # Aperçu sans créer de fichiers
@@ -337,6 +347,8 @@ php artisan ai-native:generate schema.json --preview
 # Générer seulement des composants spécifiques
 php artisan ai-native:generate schema.json --only=models,migrations
 php artisan ai-native:generate schema.json --only=controllers,routes
+php artisan ai-native:generate schema.json --only=policies,observers
+php artisan ai-native:generate schema.json --only=factories,seeders
 ```
 
 ### Validation
@@ -404,6 +416,31 @@ return [
     // ...
 ];
 ```
+
+## 🔁 Fusion Sectionnelle & Marqueurs
+
+Le mode `--merge` ne réécrit que les zones entourées de marqueurs spéciaux. Tout code personnalisé ajouté hors de ces bornes est conservé.
+
+Exemples de marqueurs utilisés :
+
+```
+// >>> AI-NATIVE FILLABLE START
+// (contenu géré par le générateur)
+// >>> AI-NATIVE FILLABLE END
+
+// >>> AI-NATIVE CONTROLLER HOOKS START
+// >>> AI-NATIVE CONTROLLER HOOKS END
+
+// >>> AI-NATIVE POLICY METHODS START
+// >>> AI-NATIVE POLICY METHODS END
+```
+
+Blocs actuellement mergeables sectionnellement : Models (fillable, casts, relations, scopes), Controllers (hooks & méthodes CRUD), Routes (bloc complet), Policies, Observers, Factories, Seeders, Auth Controller. Les Migrations ne sont pas fusionnées (principe d'immutabilité historique) : on crée une nouvelle migration si le schéma change.
+
+Avantages :
+- Régénération sûre et itérative
+- Conservation des personnalisations
+- Diff ciblé sur blocs structurés
 
 ## 🤖 Optimisation pour l'IA
 
@@ -566,24 +603,26 @@ Commande : php artisan ai-native:generate task-manager.json
 
 ## 📊 Statut des Fonctionnalités
 
-### ✅ **Fonctionnalités Complètement Implémentées (8/8)**
-1. ✅ Suppression automatique de welcome.blade.php
-2. ✅ Système de seeders avec DatabaseSeeder et ordre de dépendances
-3. ✅ Remplacement de --force par --clean/merge/preview
-4. ✅ Routes API d'authentification automatiques (Sanctum/basic)
-5. ✅ Auto-configuration .env depuis le JSON
-6. ✅ Système de versioning et nettoyage intelligent
-7. ✅ Support complet des fichiers avec endpoints upload/download
-8. ✅ Documentation JSON Keywords complète (400+ lignes)
+### ✅ **Fonctionnalités Complètement Implémentées**
+1. Suppression automatique de welcome.blade.php
+2. Seeders avec DatabaseSeeder et ordre dépendances
+3. Modes --clean / --merge / --preview (--dry-run)
+4. Auth (Sanctum/basic) + routes auto
+5. Auto-configuration .env depuis le JSON
+6. Manifest + versioning + cleanup intelligent
+7. Endpoints upload/download automatiques pour file/files
+8. Documentation JSON Keywords complète
+9. Fusion sectionnelle multi-générateurs
+10. Marqueurs idempotents pour régénération sûre
 
 ## 🎯 Notes d'Usage Importantes
 
-- **Comportement par défaut** : `--clean` mode par défaut - supprime automatiquement les fichiers obsolètes
-- **JSON comme source de vérité** : Le schéma prend toujours le pas sur les fichiers existants
-- **Pas de conflits** : Nettoyage intelligent élimine les warnings "file exists"
-- **Traçabilité complète** : Historique complet de toutes les générations avec métadonnées
-- **Performance optimisée** : Skip la génération si aucun changement détecté
-- **Preview en premier** : Utilisez toujours `--preview` pour les schémas complexes
+- **Mode par défaut** : `--clean` (supprime fichiers obsolètes)
+- **Fusion** : Utilisez `--merge` après avoir modifié le JSON pour appliquer seulement les changements nécessaires
+- **Aperçu** : `--preview` / `--dry-run` pour voir l'impact sans écrire
+- **Migrations** : Pas de merge sectionnel (immuables). Créez de nouvelles migrations manuellement si besoin de refactor.
+- **Marqueurs** : Ne pas renommer ni supprimer les lignes START/END si vous voulez conserver la fusion automatique.
+- **Personnalisation** : Placez votre code hors des marqueurs.
 
 ## 📄 Licence
 

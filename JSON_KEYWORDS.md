@@ -1,6 +1,8 @@
-# JSON Keywords Documentation
+# JSON Keywords – Référence Strictement JSON
 
-Cette documentation liste tous les mots-clés supportés dans le schéma JSON d'ai-native/laravel pour aider les développeurs à créer des schémas JSON valides.
+Ce document est une liste concise et exhaustive des mots-clés et syntaxes utilisables dans le **fichier JSON de schéma**. Il est conçu pour être fourni à une IA (avec votre description fonctionnelle) afin qu’elle génère un JSON valide. Rien dans ce document ne concerne le code PHP généré ni les mécanismes internes (merge, marqueurs, etc.).
+
+Objectif: Donner à l’IA un vocabulaire contrôlé. N’ajoutez rien hors de ces clés / formats.
 
 ## 📋 Structure Globale
 
@@ -13,6 +15,8 @@ Cette documentation liste tous les mots-clés supportés dans le schéma JSON d'
   "custom": { ... }
 }
 ```
+
+> Seules les clés listées ci‑dessous sont attendues. Toute clé inconnue est ignorée ou peut invalider le schéma.
 
 ---
 
@@ -185,6 +189,9 @@ Définition des modèles Eloquent et de leurs propriétés.
 | `factory` | object/boolean | Configuration factory | `true` ou `{ "count": 50 }` |
 | `seeder` | boolean | Générer un seeder | `true`, `false` |
 | `cache` | object | Configuration cache | `{ "enabled": true, "ttl": 3600 }` |
+
+### Résumé rapide des clés `model`
+Obligatoires minimales: `fields` (au moins un champ). Facultatives: `relations`, `routes`, `scopes`, `policies`, `hooks`, `observers`, `filters`, `factory`, `seeder`, `cache`, `table`.
 
 ---
 
@@ -389,6 +396,8 @@ Policies d'autorisation pour contrôler l'accès aux ressources.
 
 ---
 
+Format attendu des policies: mapping action -> règle (`string`).
+
 ## 🎣 Hooks (HOOKS)
 
 Hooks de cycle de vie pour exécuter du code lors d'événements.
@@ -475,6 +484,8 @@ Observers de modèle pour réagir aux événements Eloquent.
 
 ---
 
+Valeur: mapping `evenement` -> `handler` (string) ou objet (réservé évolutions).
+
 ## 🔍 Filters (FILTERS)
 
 Filtres de requête pour l'API.
@@ -522,6 +533,8 @@ ou simplement : `"factory": true`
 ```
 
 Génère automatiquement le seeder avec l'ordre de dépendances respecté.
+
+Factory: `true` ou objet `{ "count": <int>, "states": [..] }`. Seeder: `true` ou omis.
 
 ---
 
@@ -689,6 +702,88 @@ Ce schéma génère automatiquement :
 - ✅ Factories et seeders
 - ✅ Configuration storage
 - ✅ Validation et policies
+
+---
+
+## 🧪 Mini Grammaire (Vue synthétique)
+
+```
+meta: {
+  project (string), version (string), description?,
+  auth?: { enabled (bool), provider (sanctum|basic), guards[], routes[] },
+  database?: { connection, host, database, username?, password?, charset?, collation? },
+  app?: { name?, url?, timezone? },
+  mail?/cache?/queues?/cors?/middlewares?: {...}
+},
+models: {
+  ModelName: {
+    table?,
+    fields: { fieldName: typeSpec },
+    relations?: { relationName: relationSpec },
+    routes?: [routeKey],
+    scopes?: { scopeName: scopeSpec },
+    policies?: { action: rule },
+    hooks?: { hookName: hookValue },
+    observers?: { event: handler },
+    filters?: { filterName: filterSpec },
+    factory?: true|{ count?, states?[] },
+    seeder?: true,
+    cache?: { enabled?, ttl? }
+  }
+},
+pivots?: { tableName: { fields: {...} } },
+storage?: { disks: { diskName: { driver, root?, url?, bucket?, region? } } },
+custom?: { routes: [ { method, uri, controller, middleware?[] } ] }
+```
+
+`typeSpec` patterns: `string`, `text`, `longText`, `integer`, `bigInteger`, `boolean`, `date`, `datetime`, `timestamp`, `json`, `float`, `uuid`, `decimal:precision,scale`, `enum:val1,val2`, `foreign:table`, `file:disk`, `files:disk` + règles validation séparées par `|`.
+
+RelationSpec patterns:
+- `belongsTo:Model,foreign_key?`
+- `hasOne:Model,foreign_key?`
+- `hasMany:Model,foreign_key?`
+- `belongsToMany:Model,pivot_table,foreign_key,related_key`
+- `morphTo`
+- `morphMany:Model,morphName`
+- `morphedByMany:Model,morphName`
+
+ScopeSpec patterns:
+- `where:field,value`
+- `orderBy:field,direction`
+- `whereNull:field`
+
+Policy rule combinable via `|` (OR): segments: `role:roles,...`, `authenticated`, `owner`.
+
+HookValue:
+- String simple (nom logique) ou objet `{ action:..., ... }` ou tableau de ces formes.
+
+FilterSpec exemples:
+- `where:field,{param}`
+- `where:field,like,%{search}%`
+- `whereBetween:field,{start},{end}`
+- `whereHas:relation,field,{param}`
+
+Routes disponibles: `list|index`, `show`, `create|store`, `update`, `delete|destroy`.
+
+Remplacements dynamiques possibles dans filters/hooks: `{param}` ou `%{search}%` (placeholders).
+
+---
+
+## ✅ Checklist pour l’IA
+1. Fournir `meta.project` et au moins un `models.{Name}.fields`.
+2. Chaque champ: `type` en premier, règles après (`type|rule|rule`).
+3. Relations: respecter les patterns exacts (voir ci-dessus).
+4. Ne pas inventer de clés hors de cette liste.
+5. Utiliser des noms de modèles en PascalCase, tables implicites snake_case pluriel.
+6. Pour enums: `enum:val1,val2,...` (valeurs simples sans espace).
+7. Pour decimal: `decimal:precision,scale` (ex: `decimal:10,2`).
+8. Pour belongsToMany: fournir pivot + 2 clés si ambiguïtés.
+9. Mettre `factory: true` ou objet `{ "count": N }` si génération de données.
+10. Ajouter `seeder: true` si besoin d’initialisation.
+
+---
+
+Ce document ne doit pas contenir d’instructions sur le code généré, uniquement la surface JSON utilisable.
 
 ---
 

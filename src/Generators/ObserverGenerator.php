@@ -34,8 +34,9 @@ class ObserverGenerator
         $content[] = "use Illuminate\\Support\\Facades\\Log;";
         $content[] = "use Illuminate\\Support\\Str;";
         $content[] = "";
-        $content[] = "class {$className}";
-        $content[] = "{";
+    $content[] = "class {$className}";
+    $content[] = "{";
+    $content[] = "    // >>> AI-NATIVE OBSERVER METHODS START";
         
         // Standard Laravel model events
         $standardEvents = [
@@ -56,7 +57,8 @@ class ObserverGenerator
             }
         }
         
-        $content[] = "}";
+    $content[] = "    // >>> AI-NATIVE OBSERVER METHODS END";
+    $content[] = "}";
         
         return implode("\n", $content);
     }

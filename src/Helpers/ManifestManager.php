@@ -334,6 +334,16 @@ class ManifestManager
         return $this->manifest;
     }
 
+    public function isFileTracked(string $relativePath): bool
+    {
+        foreach ($this->manifest['files'] as $files) {
+            if (isset($files[$relativePath])) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public function clear(): void
     {
         $this->manifest = $this->getDefaultManifest();

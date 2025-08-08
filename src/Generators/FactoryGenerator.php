@@ -19,7 +19,12 @@ class FactoryGenerator
     {
         $model = $parser->getModel($modelName);
         $fields = $model['fields'] ?? [];
+        // The schema may specify "factory": true/false or an object with config.
         $factory = $model['factory'] ?? [];
+        if (!is_array($factory)) {
+            // Normalize non-array (boolean) values to empty array configuration
+            $factory = [];
+        }
         
         $className = Str::studly($modelName) . 'Factory';
         $modelClass = Str::studly($modelName);
@@ -48,9 +53,10 @@ class FactoryGenerator
         $content[] = "     *";
         $content[] = "     * @return array<string, mixed>";
         $content[] = "     */";
-        $content[] = "    public function definition(): array";
-        $content[] = "    {";
-        $content[] = "        return [";
+    $content[] = "    // >>> AI-NATIVE FACTORY DEFINITION START";
+    $content[] = "    public function definition(): array";
+    $content[] = "    {";
+    $content[] = "        return [";
         
         foreach ($fields as $field => $definition) {
             // Skip auto-generated fields
@@ -62,13 +68,14 @@ class FactoryGenerator
             $content[] = "            '{$field}' => {$fakeValue},";
         }
         
-        $content[] = "        ];";
-        $content[] = "    }";
+    $content[] = "        ];";
+    $content[] = "    }";
+    $content[] = "    // >>> AI-NATIVE FACTORY DEFINITION END";
         
         // Add factory states if defined
         $this->addFactoryStates($content, $factory, $fields);
         
-        $content[] = "}";
+    $content[] = "}";
         
         return implode("\n", $content);
     }
@@ -210,6 +217,10 @@ class FactoryGenerator
 
     protected function addFactoryStates(array &$content, array $factory, array $fields): void
     {
+        // Defensive: ensure factory config is array (schema could have boolean)
+        if (!is_array($factory)) {
+            return; // nothing to do
+        }
         // Add common states based on field patterns
         if (isset($fields['is_active']) || isset($fields['active'])) {
             $content[] = "";

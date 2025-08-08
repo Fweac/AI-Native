@@ -45,8 +45,9 @@ class SeederGenerator
         $content[] = "    /**";
         $content[] = "     * Run the database seeds.";
         $content[] = "     */";
-        $content[] = "    public function run(): void";
-        $content[] = "    {";
+    $content[] = "    // >>> AI-NATIVE SEEDER RUN START";
+    $content[] = "    public function run(): void";
+    $content[] = "    {";
         
         // Create basic factory instances
         if ($this->hasSimpleRelationships($relations)) {
@@ -56,7 +57,8 @@ class SeederGenerator
             $this->addComplexSeeding($content, $modelName, $model, $parser, $count);
         }
         
-        $content[] = "    }";
+    $content[] = "    }";
+    $content[] = "    // >>> AI-NATIVE SEEDER RUN END";
         $content[] = "}";
         
         return implode("\n", $content);

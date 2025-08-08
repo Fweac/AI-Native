@@ -89,7 +89,7 @@ class GenerateFromJsonCommand extends Command
                             {--clean : Clean previous generation and regenerate all (default)}
                             {--merge : Try to merge with existing files}
                             {--preview : Show what would be generated/cleaned without creating files}
-                            {--dry-run : Alias for --preview}'
+                            {--dry-run : Alias for --preview}';
 
     protected $description = 'Generate Laravel components from AI-Native JSON schema';
 
@@ -106,6 +106,9 @@ class GenerateFromJsonCommand extends Command
     protected ConfigManager $configManager;
     protected EnvManager $envManager;
     protected ManifestManager $manifestManager;
+    protected array $mergeSkipped = [];
+    protected array $mergeCreated = [];
+    protected array $mergeUpdated = [];
 
     public function __construct(Filesystem $files)
     {
@@ -160,17 +163,21 @@ class GenerateFromJsonCommand extends Command
         // Parse options with new system
         $onlyComponents = $this->option('only') ? explode(',', $this->option('only')) : null;
         $cleanMode = $this->option('clean') || (!$this->option('merge') && !$this->option('preview') && !$this->option('dry-run'));
-        $mergeMode = $this->option('merge');
+    $mergeMode = $this->option('merge');
         $previewMode = $this->option('preview') || $this->option('dry-run');
         
-        $schema = $this->parser->getSchema();
+    $schema = $this->parser->getSchema();
+    $dryRun = $previewMode; // internal flag for generation helpers
         
         // Check if schema has changed
         $hasChanged = $this->manifestManager->hasSchemaChanged($schema);
         
         if (!$hasChanged && !$previewMode) {
-            $this->info('Schema unchanged since last generation. Use --clean to force regeneration.');
-            return 0;
+            // Si on cible des composants spécifiques (only) on autorise toujours la régénération idempotente
+            if ($onlyComponents === null) {
+                $this->info('Schema unchanged since last generation. Use --clean to force regeneration or specify --only.');
+                return 0;
+            }
         }
 
         // Show what will happen
@@ -191,51 +198,51 @@ class GenerateFromJsonCommand extends Command
 
         // Generate components
         if ($this->shouldGenerate('models', $onlyComponents)) {
-            $this->generateModels($cleanMode);
+            $this->generateModels($cleanMode, $dryRun, $mergeMode);
         }
 
         if ($this->shouldGenerate('migrations', $onlyComponents)) {
-            $this->generateMigrations($cleanMode);
+            $this->generateMigrations($cleanMode, $dryRun, $mergeMode);
         }
 
         if ($this->shouldGenerate('controllers', $onlyComponents)) {
-            $this->generateControllers($cleanMode);
+            $this->generateControllers($cleanMode, $dryRun, $mergeMode);
         }
 
         if ($this->shouldGenerate('factories', $onlyComponents)) {
-            $this->generateFactories($cleanMode);
+            $this->generateFactories($cleanMode, $dryRun, $mergeMode);
         }
 
         if ($this->shouldGenerate('seeders', $onlyComponents)) {
-            $this->generateSeeders($cleanMode);
+            $this->generateSeeders($cleanMode, $dryRun, $mergeMode);
         }
 
         if ($this->shouldGenerate('policies', $onlyComponents)) {
-            $this->generatePolicies($cleanMode);
+            $this->generatePolicies($cleanMode, $dryRun, $mergeMode);
         }
 
         if ($this->shouldGenerate('observers', $onlyComponents)) {
-            $this->generateObservers($cleanMode);
+            $this->generateObservers($cleanMode, $dryRun, $mergeMode);
         }
 
         if ($this->shouldGenerate('routes', $onlyComponents)) {
-            $this->generateRoutes($cleanMode);
+            $this->generateRoutes($cleanMode, $dryRun, $mergeMode);
         }
 
         // Generate authentication controller and routes if auth is enabled
         $authConfig = $this->parser->getAuthConfig();
         if ($authConfig['enabled'] ?? false) {
-            $this->generateAuthComponents($cleanMode);
+            $this->generateAuthComponents($cleanMode, $dryRun, $mergeMode);
         }
 
         // Generate pivot tables
-        $this->generatePivotTables($cleanMode);
+    $this->generatePivotTables($cleanMode, $dryRun);
 
         // Generate custom routes
-        $this->generateCustomRoutes($cleanMode);
+    $this->generateCustomRoutes($cleanMode, $dryRun);
 
         // Generate service providers for policies and observers
-        $this->generateServiceProviders($cleanMode);
+    $this->generateServiceProviders($cleanMode, $dryRun);
 
         // Remove welcome.blade.php if it exists
         $this->removeWelcomeFile();
@@ -245,13 +252,16 @@ class GenerateFromJsonCommand extends Command
         $this->manifestManager->saveToHistory();
 
         $this->info('Generation completed successfully!');
+        if ($mergeMode) {
+            $this->renderMergeReport();
+        }
         $this->showNextSteps();
 
         return 0;
     }
 
     // @MODELS - Génération des modèles Eloquent
-    protected function generateModels(bool $cleanMode): void
+    protected function generateModels(bool $cleanMode, bool $dryRun, bool $mergeMode = false): void
     {
         $this->info('Generating Models...');
         
@@ -263,8 +273,49 @@ class GenerateFromJsonCommand extends Command
             $content = $this->modelGenerator->generate($modelName, $this->parser);
             
             $this->ensureDirectoryExists(dirname($filePath));
-            $this->files->put($filePath, $content);
-            $this->info("  Created: Models/{$fileName}");
+            if ($mergeMode && $this->files->exists($filePath)) {
+                $existing = $this->files->get($filePath);
+                $hasMarkers = strpos($existing, '// >>> AI-NATIVE FILLABLE START') !== false;
+                if (!$this->manifestManager->isFileTracked($relativePath) && !$hasMarkers) {
+                    $this->line("  Skip (merge - existing untouched): Models/{$fileName}");
+                    $this->mergeSkipped[] = $relativePath;
+                    continue;
+                }
+                if ($hasMarkers) {
+                    if ($dryRun) {
+                        $this->line("  Would update sections: Models/{$fileName}");
+                    } else {
+                        $merged = $this->mergeMarkedSections($existing, $content, [
+                            ['// >>> AI-NATIVE FILLABLE START','// >>> AI-NATIVE FILLABLE END'],
+                            ['// >>> AI-NATIVE CASTS START','// >>> AI-NATIVE CASTS END'],
+                            ['// >>> AI-NATIVE RELATIONS START','// >>> AI-NATIVE RELATIONS END'],
+                            ['// >>> AI-NATIVE SCOPES START','// >>> AI-NATIVE SCOPES END'],
+                        ]);
+                        $this->files->put($filePath, $merged);
+                        $this->info("  Updated sections: Models/{$fileName}");
+                        $this->mergeUpdated[] = $relativePath;
+                    }
+                    // Track even if updated
+                    $this->manifestManager->addGeneratedFile('models', $relativePath, ['model_name'=>$modelName]);
+                    continue;
+                }
+                // Has no markers but tracked: overwrite fully
+                if ($dryRun) {
+                    $this->line("  Would overwrite: Models/{$fileName}");
+                } else {
+                    $this->files->put($filePath, $content);
+                    $this->info("  Overwritten: Models/{$fileName}");
+                    $this->mergeUpdated[] = $relativePath;
+                }
+            } else {
+                if ($dryRun) {
+                    $this->line("  Would create: Models/{$fileName}");
+                } else {
+                    $this->files->put($filePath, $content);
+                    $this->info("  Created: Models/{$fileName}");
+                    if ($mergeMode) { $this->mergeCreated[] = $relativePath; }
+                }
+            }
             
             // Track in manifest
             $this->manifestManager->addGeneratedFile('models', $relativePath, [
@@ -274,7 +325,7 @@ class GenerateFromJsonCommand extends Command
     }
 
     // @MIGRATIONS - Génération des migrations avec gestion des tables existantes
-    protected function generateMigrations(bool $cleanMode): void
+    protected function generateMigrations(bool $cleanMode, bool $dryRun, bool $mergeMode = false): void
     {
         $this->info('Generating Migrations...');
         
@@ -290,10 +341,17 @@ class GenerateFromJsonCommand extends Command
                 continue;
             }
             
-            // Clean up existing migrations for this table
+            // Clean or keep existing migrations depending on merge mode
             $existingMigrations = glob(database_path("migrations/*_create_{$tableName}_table.php"));
-            foreach ($existingMigrations as $oldMigration) {
-                $this->files->delete($oldMigration);
+            if ($mergeMode) {
+                if (!empty($existingMigrations)) {
+                    $this->line("  Keep existing migration for {$tableName} (merge mode)");
+                    continue; // do not create a duplicate
+                }
+            } else {
+                foreach ($existingMigrations as $oldMigration) {
+                    $this->files->delete($oldMigration);
+                }
             }
             
             $timestamp = now()->format('Y_m_d_His') . rand(10, 99);
@@ -303,8 +361,13 @@ class GenerateFromJsonCommand extends Command
             
             $content = $this->migrationGenerator->generate($modelName, $this->parser);
             
-            $this->files->put($filePath, $content);
-            $this->info("  Created: migrations/{$fileName}");
+            if ($dryRun) {
+                $this->line("  Would create: migrations/{$fileName}");
+            } else {
+                $this->files->put($filePath, $content);
+                $this->info("  Created: migrations/{$fileName}");
+                $this->mergeCreated[] = $relativePath;
+            }
             
             // Track in manifest
             $this->manifestManager->addGeneratedFile('migrations', $relativePath, [
@@ -339,9 +402,11 @@ class GenerateFromJsonCommand extends Command
     }
 
     // @CONTROLLERS - Génération des contrôleurs API avec CRUD
-    protected function generateControllers(bool $cleanMode): void
+    protected function generateControllers(bool $cleanMode, bool $dryRun, bool $mergeMode = false): void
     {
         $this->info('Generating Controllers...');
+    // Reload schema to ensure validation rule normalization applies
+    $this->parser->fromArray($this->parser->getSchema());
         
         foreach ($this->parser->getModelNames() as $modelName) {
             $routes = $this->parser->getModelRoutes($modelName);
@@ -356,8 +421,46 @@ class GenerateFromJsonCommand extends Command
             $content = $this->controllerGenerator->generate($modelName, $this->parser);
             
             $this->ensureDirectoryExists(dirname($filePath));
-            $this->files->put($filePath, $content);
-            $this->info("  Created: Http/Controllers/{$fileName}");
+            if ($mergeMode && $this->files->exists($filePath)) {
+                $existing = $this->files->get($filePath);
+                $hasMarkers = strpos($existing, '// >>> AI-NATIVE METHODS START') !== false;
+                if (!$this->manifestManager->isFileTracked($relativePath) && !$hasMarkers) {
+                    $this->line("  Skip (merge - existing untouched): Http/Controllers/{$fileName}");
+                    $this->mergeSkipped[] = $relativePath;
+                    continue;
+                }
+                if ($hasMarkers) {
+                    if ($dryRun) {
+                        $this->line("  Would update sections: Http/Controllers/{$fileName}");
+                    } else {
+                        $merged = $this->mergeMarkedSections($existing, $content, [
+                            ['// >>> AI-NATIVE HOOKS START','// >>> AI-NATIVE HOOKS END'],
+                            ['// >>> AI-NATIVE METHODS START','// >>> AI-NATIVE METHODS END'],
+                        ]);
+                        $this->files->put($filePath, $merged);
+                        $this->info("  Updated sections: Http/Controllers/{$fileName}");
+                        $this->mergeUpdated[] = $relativePath;
+                    }
+                    $this->manifestManager->addGeneratedFile('controllers', $relativePath, [ 'model_name'=>$modelName, 'routes'=>$routes ]);
+                    continue;
+                }
+                // Overwrite tracked but unmarked
+                if ($dryRun) {
+                    $this->line("  Would overwrite: Http/Controllers/{$fileName}");
+                } else {
+                    $this->files->put($filePath, $content);
+                    $this->info("  Overwritten: Http/Controllers/{$fileName}");
+                    $this->mergeUpdated[] = $relativePath;
+                }
+            } else {
+                if ($dryRun) {
+                    $this->line("  Would create: Http/Controllers/{$fileName}");
+                } else {
+                    $this->files->put($filePath, $content);
+                    $this->info("  Created: Http/Controllers/{$fileName}");
+                    if ($mergeMode) { $this->mergeCreated[] = $relativePath; }
+                }
+            }
             
             // Track in manifest
             $this->manifestManager->addGeneratedFile('controllers', $relativePath, [
@@ -368,31 +471,51 @@ class GenerateFromJsonCommand extends Command
     }
 
     // @ROUTES - Génération des routes API avec gestion intelligente
-    protected function generateRoutes(bool $cleanMode): void
+    protected function generateRoutes(bool $cleanMode, bool $dryRun, bool $mergeMode = false): void
     {
-        $this->info('Generating API Routes...');
+    $this->info('Generating API Routes...');
+    // Force parser reload to ensure updated rule normalisation
+    $this->parser->fromArray($this->parser->getSchema());
         
-        $routesContent = $this->generateApiRoutesContent();
+        $routesContent = $this->generateApiRoutesContent(); // full file when new
         $filePath = base_path('routes/api.php');
         $relativePath = "routes/api.php";
-        
-            // Check if AI-Native routes already exist and replace them
-            if (strpos($existingContent, '// AI-Native Generated Routes') !== false) {
-                // Replace existing AI-Native routes
-                $pattern = '/\/\/ AI-Native Generated Routes.*?(?=\/\*|$)/s';
-                $newContent = preg_replace($pattern, $this->getGeneratedRoutesSection(), $existingContent);
-                $this->files->put($filePath, $newContent);
-                $this->info("  Updated existing AI-Native routes in: routes/api.php");
+        $existingContent = $this->files->exists($filePath) ? $this->files->get($filePath) : null;
+        $section = $this->getGeneratedRoutesSection();
+        $hasMarkers = $existingContent && strpos($existingContent, '// >>> AI-NATIVE ROUTES START') !== false && strpos($existingContent, '// >>> AI-NATIVE ROUTES END') !== false;
+
+    if ($dryRun) {
+            if (!$existingContent) {
+                $this->line('  Would create routes/api.php');
+            } elseif ($hasMarkers) {
+                $this->line('  Would replace AI-Native routes section');
             } else {
-                // Append to existing file
-                $newContent = $existingContent . "\n\n" . $this->getGeneratedRoutesSection();
-                $this->files->put($filePath, $newContent);
-                $this->info("  Added AI-Native routes to: routes/api.php");
+                $this->line('  Would append AI-Native routes section');
             }
         } else {
-            // Create new file
-            $this->files->put($filePath, $routesContent);
-            $this->info("  Created: routes/api.php");
+            if (!$existingContent) {
+                $this->files->put($filePath, $routesContent);
+                $this->info('  Created: routes/api.php');
+                $this->mergeCreated[] = $relativePath;
+            } else {
+                if ($hasMarkers) {
+                    $pattern = '/\/\/ >>> AI-NATIVE AUTH ROUTES START.*?\/\/ >>> AI-NATIVE ROUTES END/s';
+                    if (!preg_match($pattern, $existingContent)) {
+                        $pattern = '/\/\/ >>> AI-NATIVE ROUTES START.*?\/\/ >>> AI-NATIVE ROUTES END/s';
+                    }
+                    $newContent = preg_replace($pattern, $section, $existingContent) ?? $existingContent;
+                    // Normalize obsolete Route::group(function () { to new [] form if persisted outside markers
+                    $newContent = str_replace('Route::group(function () {', 'Route::group([], function () {', $newContent);
+                    $this->files->put($filePath, $newContent);
+                    $this->info('  Updated AI-Native routes section');
+                    $this->mergeUpdated[] = $relativePath;
+                } else {
+                    $newContent = rtrim($existingContent) . "\n\n" . $section . "\n";
+                    $this->files->put($filePath, $newContent);
+                    $this->info('  Added AI-Native routes section');
+                    $this->mergeUpdated[] = $relativePath;
+                }
+            }
         }
         
         // Track in manifest
@@ -402,7 +525,7 @@ class GenerateFromJsonCommand extends Command
         ]);
     }
 
-    protected function generatePivotTables(bool $cleanMode): void
+    protected function generatePivotTables(bool $cleanMode, bool $dryRun): void
     {
         $pivots = $this->parser->getPivots();
         
@@ -411,8 +534,22 @@ class GenerateFromJsonCommand extends Command
         }
         
         $this->info('Generating Pivot Table Migrations...');
-        
+        // Order pivots to reduce foreign key issues: ensure both sides models exist first
+        $ordered = [];
         foreach ($pivots as $pivotName => $pivotConfig) {
+            $score = 0;
+            $fields = $pivotConfig['fields'] ?? [];
+            foreach ($fields as $fname => $fdef) {
+                if (str_starts_with($fdef, 'foreign:')) { $score++; }
+            }
+            $ordered[] = ['name'=>$pivotName,'config'=>$pivotConfig,'score'=>$score];
+        }
+        // Simple heuristic: more foreign refs later (so base tables already created)
+        usort($ordered, function($a,$b){ return $a['score'] <=> $b['score']; });
+
+        foreach ($ordered as $pivotMeta) {
+            $pivotName = $pivotMeta['name'];
+            $pivotConfig = $pivotMeta['config'];
             $timestamp = now()->format('Y_m_d_His') . rand(10, 99);
             $fileName = "{$timestamp}_create_{$pivotName}_table.php";
             $filePath = database_path("migrations/{$fileName}");
@@ -426,15 +563,19 @@ class GenerateFromJsonCommand extends Command
             $content = $this->migrationGenerator->generatePivotMigration($pivotName, $pivotConfig);
             
             if ($dryRun) {
-                $this->line("  Would create: {$filePath}");
+                $this->line("  Would create: migrations/{$fileName}");
             } else {
                 $this->files->put($filePath, $content);
                 $this->info("  Created: migrations/{$fileName}");
             }
+            $this->manifestManager->addGeneratedFile('migrations', "database/migrations/{$fileName}", [
+                'pivot' => true,
+                'table_name' => $pivotName
+            ]);
         }
     }
 
-    protected function generateCustomRoutes(bool $cleanMode): void
+    protected function generateCustomRoutes(bool $cleanMode, bool $dryRun): void
     {
         $customRoutes = $this->parser->getCustomRoutes();
         
@@ -460,7 +601,7 @@ class GenerateFromJsonCommand extends Command
         
         $routes[] = "<?php";
         $routes[] = "";
-        $routes[] = "use Illuminate\Support\Facades\Route;";
+    $routes[] = "use Illuminate\\Support\\Facades\\Route;";
         
         // Add controller imports
         foreach ($this->parser->getModelNames() as $modelName) {
@@ -468,14 +609,25 @@ class GenerateFromJsonCommand extends Command
             $routes[] = "use App\\Http\\Controllers\\{$controllerName};";
         }
         
-        $routes[] = "";
-        $routes[] = "// AI-Native Generated Routes";
+    $routes[] = "";
+    // Authentication sub-section (always regenerated if enabled)
+    $routes[] = "// >>> AI-NATIVE AUTH ROUTES START";
+        $authConfig = $this->parser->getAuthConfig();
+        if (($authConfig['enabled'] ?? false) === true) {
+            $authRoutes = $this->authGenerator->generateAuthRoutes($this->parser);
+            $routes[] = "// AI-Native Authentication";
+            $routes[] = trim($authRoutes);
+        }
+    $routes[] = "// >>> AI-NATIVE AUTH ROUTES END";
+    $routes[] = "";
+    $routes[] = "// >>> AI-NATIVE ROUTES START";
         
         if (!empty($globalMiddlewares)) {
             $middlewareString = "'" . implode("', '", $globalMiddlewares) . "'";
             $routes[] = "Route::middleware([{$middlewareString}])->group(function () {";
         } else {
-            $routes[] = "Route::group(function () {";
+            // Laravel 12 require first arg array when calling group; explicit group with []
+            $routes[] = "Route::group([], function () {";
         }
         
         foreach ($this->parser->getModelNames() as $modelName) {
@@ -518,7 +670,8 @@ class GenerateFromJsonCommand extends Command
             $routes[] = "";
         }
         
-        $routes[] = "});";
+    $routes[] = "});";
+    $routes[] = "// >>> AI-NATIVE ROUTES END";
         
         return implode("\n", $routes);
     }
@@ -527,65 +680,59 @@ class GenerateFromJsonCommand extends Command
     {
         $routes = [];
         $globalMiddlewares = $this->parser->getGlobalMiddlewares();
-        
-        // Add controller imports
-        foreach ($this->parser->getModelNames() as $modelName) {
-            $controllerName = Str::studly($modelName) . 'Controller';
-            $routes[] = "use App\\Http\\Controllers\\{$controllerName};";
+
+        // Authentication sub-section (always regenerated if enabled). No controller imports here to avoid duplication.
+        $routes[] = "// >>> AI-NATIVE AUTH ROUTES START";
+        $authConfig = $this->parser->getAuthConfig();
+        if (($authConfig['enabled'] ?? false) === true) {
+            $authRoutes = $this->authGenerator->generateAuthRoutes($this->parser);
+            $routes[] = "// AI-Native Authentication";
+            $routes[] = trim($authRoutes);
         }
-        
+        $routes[] = "// >>> AI-NATIVE AUTH ROUTES END";
         $routes[] = "";
-        $routes[] = "// AI-Native Generated Routes";
-        
+        $routes[] = "// >>> AI-NATIVE ROUTES START";
+
         if (!empty($globalMiddlewares)) {
             $middlewareString = "'" . implode("', '", $globalMiddlewares) . "'";
             $routes[] = "Route::middleware([{$middlewareString}])->group(function () {";
         } else {
-            $routes[] = "Route::group(function () {";
+            // Laravel 12 requiert un premier argument array pour group()
+            $routes[] = "Route::group([], function () {";
         }
-        
+
         foreach ($this->parser->getModelNames() as $modelName) {
             $modelRoutes = $this->parser->getModelRoutes($modelName);
-            if (empty($modelRoutes)) {
-                continue;
-            }
-            
+            if (empty($modelRoutes)) { continue; }
+
             $controllerName = Str::studly($modelName) . 'Controller';
             $resourceName = Str::plural(Str::snake($modelName, '-'));
-            
             $routes[] = "    // {$modelName} routes";
-            
+
             foreach ($modelRoutes as $route) {
                 switch ($route) {
                     case 'list':
                     case 'index':
-                        $routes[] = "    Route::get('{$resourceName}', [{$controllerName}::class, 'index']);";
-                        break;
+                        $routes[] = "    Route::get('{$resourceName}', [{$controllerName}::class, 'index']);"; break;
                     case 'show':
-                        $routes[] = "    Route::get('{$resourceName}/{{$modelName}}', [{$controllerName}::class, 'show']);";
-                        break;
+                        $routes[] = "    Route::get('{$resourceName}/{{$modelName}}', [{$controllerName}::class, 'show']);"; break;
                     case 'create':
                     case 'store':
-                        $routes[] = "    Route::post('{$resourceName}', [{$controllerName}::class, 'store']);";
-                        break;
+                        $routes[] = "    Route::post('{$resourceName}', [{$controllerName}::class, 'store']);"; break;
                     case 'update':
-                        $routes[] = "    Route::put('{$resourceName}/{{$modelName}}', [{$controllerName}::class, 'update']);";
-                        break;
+                        $routes[] = "    Route::put('{$resourceName}/{{$modelName}}', [{$controllerName}::class, 'update']);"; break;
                     case 'delete':
                     case 'destroy':
-                        $routes[] = "    Route::delete('{$resourceName}/{{$modelName}}', [{$controllerName}::class, 'destroy']);";
-                        break;
+                        $routes[] = "    Route::delete('{$resourceName}/{{$modelName}}', [{$controllerName}::class, 'destroy']);"; break;
                 }
             }
-            
-            // Add file upload/download routes if model has file fields
+
             $this->addFileRoutesToGeneration($routes, $modelName, $resourceName, $controllerName);
-            
             $routes[] = "";
         }
-        
+
         $routes[] = "});";
-        
+        $routes[] = "// >>> AI-NATIVE ROUTES END";
         return implode("\n", $routes);
     }
 
@@ -597,7 +744,7 @@ class GenerateFromJsonCommand extends Command
         $fileFields = [];
 
         foreach ($fields as $fieldName => $fieldDefinition) {
-            $fieldType = $this->parser->parseFieldType($fieldName, $fieldDefinition);
+            $fieldType = $this->parser->parseFieldType($fieldName, $fieldDefinition); // now compatible signature
             if (isset($fieldType['is_file']) && $fieldType['is_file']) {
                 $hasFileFields = true;
                 $fileFields[] = $fieldName;
@@ -716,7 +863,7 @@ class GenerateFromJsonCommand extends Command
     }
 
     // @FACTORIES - Génération des factories pour testing
-    protected function generateFactories(bool $cleanMode): void
+    protected function generateFactories(bool $cleanMode, bool $dryRun, bool $mergeMode = false): void
     {
         $this->info('Generating Model Factories...');
         
@@ -732,18 +879,51 @@ class GenerateFromJsonCommand extends Command
             
             $content = $this->factoryGenerator->generate($modelName, $this->parser);
             
+            if ($mergeMode && $this->files->exists($filePath)) {
+                $existing = $this->files->get($filePath);
+                $hasMarkers = strpos($existing, '// >>> AI-NATIVE FACTORY DEFINITION START') !== false;
+                $relative = "database/factories/{$fileName}";
+                if (!$this->manifestManager->isFileTracked($relative) && !$hasMarkers) {
+                    $this->line("  Skip (merge - existing untouched): factories/{$fileName}");
+                    $this->mergeSkipped[] = $relative;
+                    continue;
+                }
+                if ($hasMarkers) {
+                    if ($dryRun) {
+                        $this->line("  Would update sections: factories/{$fileName}");
+                    } else {
+                        $merged = $this->mergeMarkedSections($existing, $content, [
+                            ['// >>> AI-NATIVE FACTORY DEFINITION START','// >>> AI-NATIVE FACTORY DEFINITION END'],
+                        ]);
+                        $this->files->put($filePath, $merged);
+                        $this->info("  Updated sections: factories/{$fileName}");
+                        $this->mergeUpdated[] = $relative;
+                    }
+                    continue;
+                }
+                // overwrite tracked or unmarked
+                if ($dryRun) {
+                    $this->line("  Would overwrite: factories/{$fileName}");
+                } else {
+                    $this->files->put($filePath, $content);
+                    $this->info("  Overwritten: factories/{$fileName}");
+                    $this->mergeUpdated[] = $relative;
+                }
+                continue;
+            }
             if ($dryRun) {
-                $this->line("  Would create: {$filePath}");
+                $this->line("  Would create: factories/{$fileName}");
             } else {
                 $this->ensureDirectoryExists(dirname($filePath));
                 $this->files->put($filePath, $content);
                 $this->info("  Created: factories/{$fileName}");
+                if ($mergeMode) { $this->mergeCreated[] = "database/factories/{$fileName}"; }
             }
         }
     }
 
     // @SEEDERS - Génération des seeders avec ordre de dépendances
-    protected function generateSeeders(bool $cleanMode): void
+    protected function generateSeeders(bool $cleanMode, bool $dryRun, bool $mergeMode = false): void
     {
         $this->info('Generating Seeders...');
         
@@ -760,12 +940,44 @@ class GenerateFromJsonCommand extends Command
             
             $content = $this->seederGenerator->generate($modelName, $this->parser);
             
+            if ($mergeMode && $this->files->exists($filePath)) {
+                $existing = $this->files->get($filePath);
+                $hasMarkers = strpos($existing, '// >>> AI-NATIVE SEEDER RUN START') !== false;
+                $relative = "database/seeders/{$fileName}";
+                if (!$this->manifestManager->isFileTracked($relative) && !$hasMarkers) {
+                    $this->line("  Skip (merge - existing untouched): seeders/{$fileName}");
+                    $this->mergeSkipped[] = $relative;
+                    continue;
+                }
+                if ($hasMarkers) {
+                    if ($dryRun) {
+                        $this->line("  Would update sections: seeders/{$fileName}");
+                    } else {
+                        $merged = $this->mergeMarkedSections($existing, $content, [
+                            ['// >>> AI-NATIVE SEEDER RUN START','// >>> AI-NATIVE SEEDER RUN END'],
+                        ]);
+                        $this->files->put($filePath, $merged);
+                        $this->info("  Updated sections: seeders/{$fileName}");
+                        $this->mergeUpdated[] = $relative;
+                    }
+                    continue;
+                }
+                if ($dryRun) {
+                    $this->line("  Would overwrite: seeders/{$fileName}");
+                } else {
+                    $this->files->put($filePath, $content);
+                    $this->info("  Overwritten: seeders/{$fileName}");
+                    $this->mergeUpdated[] = $relative;
+                }
+                continue;
+            }
             if ($dryRun) {
-                $this->line("  Would create: {$filePath}");
+                $this->line("  Would create: seeders/{$fileName}");
             } else {
                 $this->ensureDirectoryExists(dirname($filePath));
                 $this->files->put($filePath, $content);
                 $this->info("  Created: seeders/{$fileName}");
+                if ($mergeMode) { $this->mergeCreated[] = "database/seeders/{$fileName}"; }
             }
         }
         
@@ -774,7 +986,7 @@ class GenerateFromJsonCommand extends Command
     }
 
     // @POLICIES - Génération des policies d'autorisation
-    protected function generatePolicies(bool $cleanMode): void
+    protected function generatePolicies(bool $cleanMode, bool $dryRun, bool $mergeMode = false): void
     {
         $this->info('Generating Policies...');
         
@@ -790,18 +1002,50 @@ class GenerateFromJsonCommand extends Command
             
             $content = $this->policyGenerator->generate($modelName, $this->parser);
             
+            if ($mergeMode && $this->files->exists($filePath)) {
+                $existing = $this->files->get($filePath);
+                $hasMarkers = strpos($existing, '// >>> AI-NATIVE POLICY METHODS START') !== false;
+                $relative = "app/Policies/{$fileName}";
+                if (!$this->manifestManager->isFileTracked($relative) && !$hasMarkers) {
+                    $this->line("  Skip (merge - existing untouched): Policies/{$fileName}");
+                    $this->mergeSkipped[] = $relative;
+                    continue;
+                }
+                if ($hasMarkers) {
+                    if ($dryRun) {
+                        $this->line("  Would update sections: Policies/{$fileName}");
+                    } else {
+                        $merged = $this->mergeMarkedSections($existing, $content, [
+                            ['// >>> AI-NATIVE POLICY METHODS START','// >>> AI-NATIVE POLICY METHODS END'],
+                        ]);
+                        $this->files->put($filePath, $merged);
+                        $this->info("  Updated sections: Policies/{$fileName}");
+                        $this->mergeUpdated[] = $relative;
+                    }
+                    continue;
+                }
+                if ($dryRun) {
+                    $this->line("  Would overwrite: Policies/{$fileName}");
+                } else {
+                    $this->files->put($filePath, $content);
+                    $this->info("  Overwritten: Policies/{$fileName}");
+                    $this->mergeUpdated[] = $relative;
+                }
+                continue;
+            }
             if ($dryRun) {
-                $this->line("  Would create: {$filePath}");
+                $this->line("  Would create: Policies/{$fileName}");
             } else {
                 $this->ensureDirectoryExists(dirname($filePath));
                 $this->files->put($filePath, $content);
                 $this->info("  Created: Policies/{$fileName}");
+                if ($mergeMode) { $this->mergeCreated[] = "app/Policies/{$fileName}"; }
             }
         }
     }
 
     // @OBSERVERS - Génération des observers pour lifecycle events
-    protected function generateObservers(bool $cleanMode): void
+    protected function generateObservers(bool $cleanMode, bool $dryRun, bool $mergeMode = false): void
     {
         $this->info('Generating Observers...');
         
@@ -817,12 +1061,44 @@ class GenerateFromJsonCommand extends Command
             
             $content = $this->observerGenerator->generate($modelName, $this->parser);
             
+            if ($mergeMode && $this->files->exists($filePath)) {
+                $existing = $this->files->get($filePath);
+                $hasMarkers = strpos($existing, '// >>> AI-NATIVE OBSERVER METHODS START') !== false;
+                $relative = "app/Observers/{$fileName}";
+                if (!$this->manifestManager->isFileTracked($relative) && !$hasMarkers) {
+                    $this->line("  Skip (merge - existing untouched): Observers/{$fileName}");
+                    $this->mergeSkipped[] = $relative;
+                    continue;
+                }
+                if ($hasMarkers) {
+                    if ($dryRun) {
+                        $this->line("  Would update sections: Observers/{$fileName}");
+                    } else {
+                        $merged = $this->mergeMarkedSections($existing, $content, [
+                            ['// >>> AI-NATIVE OBSERVER METHODS START','// >>> AI-NATIVE OBSERVER METHODS END'],
+                        ]);
+                        $this->files->put($filePath, $merged);
+                        $this->info("  Updated sections: Observers/{$fileName}");
+                        $this->mergeUpdated[] = $relative;
+                    }
+                    continue;
+                }
+                if ($dryRun) {
+                    $this->line("  Would overwrite: Observers/{$fileName}");
+                } else {
+                    $this->files->put($filePath, $content);
+                    $this->info("  Overwritten: Observers/{$fileName}");
+                    $this->mergeUpdated[] = $relative;
+                }
+                continue;
+            }
             if ($dryRun) {
-                $this->line("  Would create: {$filePath}");
+                $this->line("  Would create: Observers/{$fileName}");
             } else {
                 $this->ensureDirectoryExists(dirname($filePath));
                 $this->files->put($filePath, $content);
                 $this->info("  Created: Observers/{$fileName}");
+                if ($mergeMode) { $this->mergeCreated[] = "app/Observers/{$fileName}"; }
             }
         }
     }
@@ -864,7 +1140,7 @@ class GenerateFromJsonCommand extends Command
     }
     
     // Service providers pour policies et observers
-    protected function generateServiceProviders(bool $cleanMode): void
+    protected function generateServiceProviders(bool $cleanMode, bool $dryRun): void
     {
         // Generate AuthServiceProvider for policies
         $hasAnyPolicies = false;
@@ -879,8 +1155,12 @@ class GenerateFromJsonCommand extends Command
         if ($hasAnyPolicies) {
             $authServiceProviderPath = app_path('Providers/AuthServiceProvider.php');
             $content = $this->policyGenerator->generatePolicyServiceProvider($this->parser);
-            $this->files->put($authServiceProviderPath, $content);
-            $this->info('  Updated: Providers/AuthServiceProvider.php');
+            if ($dryRun) {
+                $this->line('  Would update: Providers/AuthServiceProvider.php');
+            } else {
+                $this->files->put($authServiceProviderPath, $content);
+                $this->info('  Updated: Providers/AuthServiceProvider.php');
+            }
             
             // Track in manifest
             $this->manifestManager->addGeneratedFile('config', 'app/Providers/AuthServiceProvider.php', [
@@ -901,8 +1181,12 @@ class GenerateFromJsonCommand extends Command
         if ($hasAnyObservers) {
             $observerServiceProviderPath = app_path('Providers/ObserverServiceProvider.php');
             $content = $this->observerGenerator->generateObserverServiceProvider($this->parser);
-            $this->files->put($observerServiceProviderPath, $content);
-            $this->info('  Created: Providers/ObserverServiceProvider.php');
+            if ($dryRun) {
+                $this->line('  Would create: Providers/ObserverServiceProvider.php');
+            } else {
+                $this->files->put($observerServiceProviderPath, $content);
+                $this->info('  Created: Providers/ObserverServiceProvider.php');
+            }
             
             // Track in manifest
             $this->manifestManager->addGeneratedFile('config', 'app/Providers/ObserverServiceProvider.php', [
@@ -912,7 +1196,7 @@ class GenerateFromJsonCommand extends Command
     }
 
     // @AUTH - Génération des composants d'authentification (AuthController + routes)
-    protected function generateAuthComponents(bool $cleanMode): void
+    protected function generateAuthComponents(bool $cleanMode, bool $dryRun, bool $mergeMode = false): void
     {
         $this->info('Generating Authentication Components...');
         
@@ -924,8 +1208,44 @@ class GenerateFromJsonCommand extends Command
         $content = $this->authGenerator->generateAuthController($this->parser);
         
         $this->ensureDirectoryExists(dirname($filePath));
-        $this->files->put($filePath, $content);
-        $this->info("  Created: Http/Controllers/{$fileName}");
+        if ($mergeMode && $this->files->exists($filePath)) {
+            $existing = $this->files->get($filePath);
+            $hasMarkers = strpos($existing, '// >>> AI-NATIVE METHODS START') !== false;
+            if (!$this->manifestManager->isFileTracked($relativePath) && !$hasMarkers) {
+                $this->line("  Skip (merge - existing untouched): Http/Controllers/{$fileName}");
+                $this->mergeSkipped[] = $relativePath;
+                return;
+            }
+            if ($hasMarkers) {
+                if ($dryRun) {
+                    $this->line("  Would update sections: Http/Controllers/{$fileName}");
+                } else {
+                    $merged = $this->mergeMarkedSections($existing, $content, [
+                        ['// >>> AI-NATIVE HOOKS START','// >>> AI-NATIVE HOOKS END'],
+                        ['// >>> AI-NATIVE METHODS START','// >>> AI-NATIVE METHODS END'],
+                    ]);
+                    $this->files->put($filePath, $merged);
+                    $this->info("  Updated sections: Http/Controllers/{$fileName}");
+                    $this->mergeUpdated[] = $relativePath;
+                }
+            } else {
+                if ($dryRun) {
+                    $this->line("  Would overwrite: Http/Controllers/{$fileName}");
+                } else {
+                    $this->files->put($filePath, $content);
+                    $this->info("  Overwritten: Http/Controllers/{$fileName}");
+                    $this->mergeUpdated[] = $relativePath;
+                }
+            }
+        } else {
+            if ($dryRun) {
+                $this->line("  Would create: Http/Controllers/{$fileName}");
+            } else {
+                $this->files->put($filePath, $content);
+                $this->info("  Created: Http/Controllers/{$fileName}");
+                if ($mergeMode) { $this->mergeCreated[] = $relativePath; }
+            }
+        }
         
         // Track in manifest
         $this->manifestManager->addGeneratedFile('controllers', $relativePath, [
@@ -1116,5 +1436,49 @@ class GenerateFromJsonCommand extends Command
             $this->files->delete($welcomePath);
             $this->info('  Removed: resources/views/welcome.blade.php');
         }
+    }
+
+    protected function renderMergeReport(): void
+    {
+        $this->info('');
+        $this->info('Merge report');
+        $this->line('-------------');
+        if (!empty($this->mergeCreated)) {
+            $this->info('Created:');
+            foreach (array_unique($this->mergeCreated) as $f) {
+                $this->line("  + {$f}");
+            }
+        }
+        if (!empty($this->mergeUpdated)) {
+            $this->info('Updated:');
+            foreach (array_unique($this->mergeUpdated) as $f) {
+                $this->line("  ~ {$f}");
+            }
+        }
+        if (!empty($this->mergeSkipped)) {
+            $this->info('Skipped (existing, not previously generated):');
+            foreach (array_unique($this->mergeSkipped) as $f) {
+                $this->line("  - {$f}");
+            }
+        }
+        if (empty($this->mergeCreated) && empty($this->mergeUpdated) && empty($this->mergeSkipped)) {
+            $this->line('  No changes.');
+        }
+        $this->info('');
+    }
+
+    protected function mergeMarkedSections(string $existing, string $generated, array $markerPairs): string
+    {
+        foreach ($markerPairs as [$start, $end]) {
+            if (strpos($existing, $start) === false || strpos($existing, $end) === false) {
+                continue; // cannot merge section absent in existing
+            }
+            $pattern = '/' . preg_quote($start, '/') . '.*?' . preg_quote($end, '/') . '/s';
+            if (preg_match($pattern, $generated, $genMatch)) {
+                $generatedBlock = $genMatch[0];
+                $existing = preg_replace($pattern, $generatedBlock, $existing, 1) ?? $existing;
+            }
+        }
+        return $existing;
     }
 }

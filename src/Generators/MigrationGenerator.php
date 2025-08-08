@@ -199,27 +199,28 @@ class MigrationGenerator extends BaseGenerator
             if (strpos($fieldDefinition, 'foreign:') === 0) {
                 $foreignTable = explode(':', $fieldDefinition)[1];
                 $foreignTable = explode('|', $foreignTable)[0];
-                
                 $lines[] = "\$table->foreignId('{$fieldName}')->constrained('{$foreignTable}');";
+                continue;
+            }
+
+            $parts = explode('|', $fieldDefinition);
+            $type = $parts[0];
+            $validations = array_slice($parts, 1);
+
+            // Support enum shorthand enum:val1,val2
+            if (str_starts_with($type, 'enum:')) {
+                $enumParts = explode(':', $type, 2);
+                $values = isset($enumParts[1]) ? explode(',', $enumParts[1]) : [];
+                if ($values) {
+                    $valuesString = "'" . implode("', '", $values) . "'";
+                    $line = "\$table->enum('{$fieldName}', [{$valuesString}])";
+                } else {
+                    $line = "\$table->string('{$fieldName}')";
+                }
             } else {
-                // Handle other field types
-                $parts = explode('|', $fieldDefinition);
-                $type = $parts[0];
-                $validations = array_slice($parts, 1);
-                
-                switch (true) {
-                    case str_starts_with($type, 'enum:'):
-                        $enumParts = explode(':', $type, 2);
-                        if (count($enumParts) > 1) {
-                            $values = explode(',', $enumParts[1]);
-                            $valuesString = "'" . implode("', '", $values) . "'";
-                            $line = "\$table->enum('{$fieldName}', [{$valuesString}])";
-                        } else {
-                            $line = "\$table->string('{$fieldName}')";
-                        }
-                        break;
-                    case $type === 'enum':
-                        $line = "\$table->string('{$fieldName}')";
+                switch ($type) {
+                    case 'enum':
+                        $line = "\$table->string('{$fieldName}')"; // fallback when enum values missing
                         break;
                     case 'timestamp':
                         $line = "\$table->timestamp('{$fieldName}')";
@@ -227,30 +228,47 @@ class MigrationGenerator extends BaseGenerator
                     case 'json':
                         $line = "\$table->json('{$fieldName}')";
                         break;
+                    case 'text':
+                        $line = "\$table->text('{$fieldName}')";
+                        break;
+                    case 'longText':
+                        $line = "\$table->longText('{$fieldName}')";
+                        break;
+                    case 'boolean':
+                        $line = "\$table->boolean('{$fieldName}')";
+                        break;
+                    case 'decimal':
+                        $line = "\$table->decimal('{$fieldName}')";
+                        break;
+                    case 'date':
+                        $line = "\$table->date('{$fieldName}')";
+                        break;
+                    case 'datetime':
+                        $line = "\$table->dateTime('{$fieldName}')";
+                        break;
+                    case 'integer':
+                        $line = "\$table->integer('{$fieldName}')";
+                        break;
                     default:
                         $line = "\$table->{$type}('{$fieldName}')";
                         break;
                 }
-                
-                if (in_array('nullable', $validations)) {
-                    $line .= "->nullable()";
-                }
-                
-                if (in_array('default:now', $validations)) {
-                    $line .= "->useCurrent()";
-                }
-                
-                // Handle default values for enums
-                foreach ($validations as $validation) {
-                    if (str_starts_with($validation, 'default:')) {
-                        $defaultValue = substr($validation, 8);
-                        $line .= "->default('{$defaultValue}')";
-                        break;
-                    }
-                }
-                
-                $lines[] = $line . ';';
             }
+
+            if (in_array('nullable', $validations)) {
+                $line .= "->nullable()";
+            }
+            if (in_array('default:now', $validations)) {
+                $line .= "->useCurrent()";
+            }
+            foreach ($validations as $validation) {
+                if (str_starts_with($validation, 'default:') && $validation !== 'default:now') {
+                    $defaultValue = substr($validation, 8);
+                    $line .= "->default('{$defaultValue}')";
+                    break;
+                }
+            }
+            $lines[] = $line . ';';
         }
         
         return $this->indentLines($lines);
@@ -300,7 +318,7 @@ class MigrationGenerator extends BaseGenerator
 
     protected function getStub(string $type): string
     {
-        return <<<'STUB'
+    return <<<'STUB'
 <?php
 
 use Illuminate\Database\Migrations\Migration;
@@ -312,9 +330,15 @@ return new class extends Migration
     public function up(): void
     {
         Schema::create('{{ table }}', function (Blueprint $table) {
+            // >>> AI-NATIVE MIGRATION FIELDS START
             {{ fields }}
+            // >>> AI-NATIVE MIGRATION FIELDS END
+            // >>> AI-NATIVE MIGRATION INDEXES START
             {{ indexes }}
+            // >>> AI-NATIVE MIGRATION INDEXES END
+            // >>> AI-NATIVE MIGRATION FOREIGN KEYS START
             {{ foreign_keys }}
+            // >>> AI-NATIVE MIGRATION FOREIGN KEYS END
         });
     }
 
@@ -352,7 +376,10 @@ STUB;
         foreach ($fields as $fieldName => $fieldDefinition) {
             if (!in_array($fieldName, $defaultFields)) {
                 $fieldCode = $this->generateFieldCode($fieldName, $fieldDefinition);
-                $content[] = "            " . $fieldCode;
+                // Wrap with hasColumn guard for idempotence
+                $content[] = "            if (!\\Schema::hasColumn('users', '{$fieldName}')) {";
+                $content[] = "                {$fieldCode}";
+                $content[] = "            }";
             }
         }
         
@@ -366,7 +393,7 @@ STUB;
         // Drop only the added fields
         foreach ($fields as $fieldName => $fieldDefinition) {
             if (!in_array($fieldName, $defaultFields)) {
-                $content[] = "            \$table->dropColumn('{$fieldName}');";
+                $content[] = "            if (\\Schema::hasColumn('users', '{$fieldName}')) { \$table->dropColumn('{$fieldName}'); }";
             }
         }
         

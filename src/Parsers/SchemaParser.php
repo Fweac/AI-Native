@@ -140,20 +140,28 @@ class SchemaParser
     {
         $fields = $this->getModelFields($modelName);
         $rules = [];
+        $table = $this->getModelTable($modelName);
 
         foreach ($fields as $fieldName => $fieldDefinition) {
             if (is_string($fieldDefinition)) {
-                // Simple format: "string|required"
-                $parts = explode('|', $fieldDefinition);
-                $type = array_shift($parts);
-                
-                if (!empty($parts)) {
-                    $rules[$fieldName] = implode('|', $parts);
+                $info = $this->parseFieldType($fieldDefinition);
+                $validations = $info['validations'] ?? [];
+                // Retirer les directives default:* qui ne sont pas des règles de validation
+                $validations = array_values(array_filter($validations, fn($r) => stripos($r, 'default:') !== 0));
+                // Normaliser unique sans paramètres
+                $validations = array_map(function($r) use ($fieldName, $table) {
+                    if (strtolower($r) === 'unique') { return 'unique:' . $table . ',' . $fieldName; }
+                    return $r;
+                }, $validations);
+                if (!empty($validations)) {
+                    $rules[$fieldName] = implode('|', $validations);
                 }
             } elseif (is_array($fieldDefinition)) {
-                // Advanced format with validation key
                 if (isset($fieldDefinition['validation'])) {
-                    $rules[$fieldName] = $fieldDefinition['validation'];
+                    $segments = explode('|', $fieldDefinition['validation']);
+                    $segments = array_filter($segments, fn($r) => stripos($r, 'default:') !== 0);
+                    $segments = array_map(function($r) use ($fieldName, $table) { return strtolower($r)==='unique' ? 'unique:' . $table . ',' . $fieldName : $r; }, $segments);
+                    $rules[$fieldName] = implode('|', $segments);
                 }
             }
         }
@@ -162,8 +170,16 @@ class SchemaParser
     }
 
     // Field types and parsing
-    public function parseFieldType(string $fieldDefinition): array
+    /**
+     * Parse un champ.
+     * Accept both legacy call parseFieldType($definition) and improper two-arg usage where first arg was mistakenly field name.
+     */
+    public function parseFieldType(string $fieldDefinition, ?string $maybeDefinition = null): array
     {
+        // Backward compatibility: if a second argument is passed and not null, it is actually the real definition
+        if ($maybeDefinition !== null) {
+            $fieldDefinition = $maybeDefinition; // ignore first (field name)
+        }
         $parts = explode('|', $fieldDefinition);
         $type = array_shift($parts);
         $validations = $parts;

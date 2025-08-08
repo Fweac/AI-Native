@@ -322,13 +322,21 @@ class {{ class }} extends Model
 
     protected $table = '{{ table }}';
 
+    // >>> AI-NATIVE FILLABLE START
     {{ fillable }}
+    // >>> AI-NATIVE FILLABLE END
 
+    // >>> AI-NATIVE CASTS START
     {{ casts }}
+    // >>> AI-NATIVE CASTS END
 
+    // >>> AI-NATIVE RELATIONS START
     {{ relations }}
+    // >>> AI-NATIVE RELATIONS END
 
+    // >>> AI-NATIVE SCOPES START
     {{ scopes }}
+    // >>> AI-NATIVE SCOPES END
 }
 STUB;
     }
